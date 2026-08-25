@@ -353,9 +353,10 @@ function sourcesError(message) {
 }
 
 el('openSources').addEventListener('click', async () => {
-  const { playlistPath, epgUrl } = await window.api.getSources();
+  const { playlistPath, epgUrl, vlcPath } = await window.api.getSources();
   el('playlistInput').value = playlistPath;
   el('epgInput').value = epgUrl;
+  el('vlcPathInput').value = vlcPath;
   sourcesError('');
   el('sourcesDialog').showModal();
 });
@@ -365,13 +366,19 @@ el('browsePlaylist').addEventListener('click', async () => {
   if (picked) el('playlistInput').value = picked;
 });
 
+el('browseVlcPath').addEventListener('click', async () => {
+  const picked = await window.api.chooseVlcPath();
+  if (picked) el('vlcPathInput').value = picked;
+});
+
 el('sourcesCancel').addEventListener('click', () => el('sourcesDialog').close());
 
 el('sourcesSave').addEventListener('click', async () => {
   const playlistPath = el('playlistInput').value.trim();
   const epgUrl = el('epgInput').value.trim();
+  const vlcPath = el('vlcPathInput').value.trim();
   if (!playlistPath) { sourcesError('Укажите файл или ссылку на плейлист'); return; }
-  const res = await window.api.saveSources({ playlistPath, epgUrl });
+  const res = await window.api.saveSources({ playlistPath, epgUrl, vlcPath });
   if (!res.ok) { sourcesError(res.error); return; }
   el('sourcesDialog').close();
   el('status').textContent = `Плейлист загружен: ${res.count} каналов · нажмите «Обновить»`;

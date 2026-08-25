@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('api', {
   getSources: () => ipcRenderer.invoke('sources:get'),
   saveSources: (data) => ipcRenderer.invoke('sources:save', data),
   revealConfig: () => ipcRenderer.invoke('config:reveal'),
+  chooseVlcPath: () => ipcRenderer.invoke('vlc:choose'),
   sync: () => ipcRenderer.invoke('guide:sync'),
   refreshScores: () => ipcRenderer.invoke('guide:refreshScores'),
   onProgress: (cb) => ipcRenderer.on('sync:progress', (_e, payload) => cb(payload)),

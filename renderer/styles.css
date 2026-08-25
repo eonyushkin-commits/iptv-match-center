@@ -76,6 +76,7 @@ html, body {
   font-size: 19px;
   font-weight: 600;
   letter-spacing: .06em;
+  line-height: 1.25;
   text-transform: uppercase;
 }
 
@@ -392,7 +393,7 @@ select {
 
 /* ---------- dialog ---------- */
 
-dialog#sourcesDialog {
+dialog {
   width: min(420px, 90vw);
   padding: 18px 20px;
   border: 1px solid var(--rule);
@@ -400,9 +401,9 @@ dialog#sourcesDialog {
   background: var(--panel);
   color: var(--text);
 }
-dialog#sourcesDialog::backdrop { background: rgba(0, 0, 0, .5); }
+dialog::backdrop { background: rgba(0, 0, 0, .5); }
 
-dialog#sourcesDialog h2 {
+dialog h2 {
   margin: 0 0 14px;
   font-family: var(--display);
   font-size: 16px;
@@ -441,7 +442,7 @@ dialog#sourcesDialog h2 {
   color: var(--live);
 }
 
-dialog#sourcesDialog menu {
+dialog menu {
   display: flex;
   justify-content: flex-end;
   gap: 8px;

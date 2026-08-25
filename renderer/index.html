@@ -12,7 +12,7 @@
     <header class="guide-head">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"></span>
-        <h1>IPTV Матч-центр</h1>
+        <h1>IPTV<br />Матч-центр</h1>
       </div>
       <div class="head-actions">
         <button id="openSources" class="btn ghost">Источники</button>
@@ -58,6 +58,13 @@
     <div class="field-col">
       <label for="epgInput">EPG — ссылка (необязательно, иначе берётся из плейлиста)</label>
       <input type="text" id="epgInput" placeholder="https://…/epg.xml.gz" />
+    </div>
+    <div class="field-col">
+      <label for="vlcPathInput">Путь к vlc.exe — необязательно, иначе ищется автоматически</label>
+      <div class="field-row">
+        <input type="text" id="vlcPathInput" placeholder="C:\Program Files\VideoLAN\VLC\vlc.exe" />
+        <button id="browseVlcPath" class="btn ghost" type="button">Обзор…</button>
+      </div>
     </div>
     <p class="dialog-sub" id="sourcesError" hidden></p>
     <menu>

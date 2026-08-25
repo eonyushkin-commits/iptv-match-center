@@ -117,13 +117,15 @@ ipcMain.handle('playlist:choose', async () => {
 
 ipcMain.handle('sources:get', () => {
   const raw = store.readJson(paths.configPath, {});
-  return { playlistPath: raw.playlistPath || '', epgUrl: raw.epgUrl || '' };
+  return { playlistPath: raw.playlistPath || '', epgUrl: raw.epgUrl || '', vlcPath: raw.vlcPath || '' };
 });
 
-ipcMain.handle('sources:save', async (_e, { playlistPath, epgUrl }) => {
+ipcMain.handle('sources:save', async (_e, { playlistPath, epgUrl, vlcPath }) => {
   const p = (playlistPath || '').trim();
   if (!p) return { ok: false, error: 'Укажите файл или ссылку на плейлист' };
-  saveConfig({ playlistPath: p, epgUrl: (epgUrl || '').trim() || undefined });
+  const vp = (vlcPath || '').trim();
+  if (vp && !fs.existsSync(vp)) return { ok: false, error: `Файл не найден: ${vp}` };
+  saveConfig({ playlistPath: p, epgUrl: (epgUrl || '').trim() || undefined, vlcPath: vp || undefined });
   try {
     return { ok: true, count: (await channels()).length };
   } catch (err) {
@@ -132,6 +134,19 @@ ipcMain.handle('sources:save', async (_e, { playlistPath, epgUrl }) => {
 });
 
 ipcMain.handle('config:reveal', () => shell.showItemInFolder(paths.configPath));
+
+/** Mirrors playlist:choose — a plain file picker, no side effects. The
+ * "Источники" dialog collects it together with playlist/EPG and saves all
+ * three at once via sources:save. */
+ipcMain.handle('vlc:choose', async () => {
+  const res = await dialog.showOpenDialog(win, {
+    title: 'Выберите vlc.exe',
+    filters: [{ name: 'VLC', extensions: ['exe'] }],
+    properties: ['openFile'],
+  });
+  if (res.canceled || !res.filePaths[0]) return null;
+  return res.filePaths[0];
+});
 
 ipcMain.handle('guide:sync', async () => {
   const cfg = config();
