@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; media-src * blob: data:; connect-src * blob: data:; img-src * data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>IPTV Матч-центр</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside class="guide" id="guide">
+    <header class="guide-head">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <h1>IPTV Матч-центр</h1>
+      </div>
+      <div class="head-actions">
+        <button id="openSources" class="btn ghost">Источники</button>
+        <button id="sync" class="btn">Обновить</button>
+      </div>
+    </header>
+
+    <div class="status" id="status" role="status">Загружаю сохранённую сетку…</div>
+
+    <nav class="filters" id="filters" aria-label="Фильтр">
+      <button class="filter" data-filter="all" aria-pressed="true">Все</button>
+      <button class="filter" data-filter="live" aria-pressed="false">Сейчас</button>
+      <button class="filter" data-filter="upcoming" aria-pressed="false">Предстоящие</button>
+    </nav>
+
+    <div class="list" id="list"></div>
+
+    <div class="bar" id="bar" hidden>
+      <div class="bar-title">
+        <strong id="nowTeams"></strong>
+        <span id="nowMeta"></span>
+      </div>
+      <div class="bar-controls">
+        <label class="field" id="variantField" hidden>
+          <span>Поток</span>
+          <select id="variant"></select>
+        </label>
+      </div>
+    </div>
+
+    <div class="diag" id="diag" hidden></div>
+  </aside>
+
+  <dialog id="sourcesDialog">
+    <h2>Источники</h2>
+    <div class="field-col">
+      <label for="playlistInput">Плейлист — файл или ссылка</label>
+      <div class="field-row">
+        <input type="text" id="playlistInput" placeholder="https://… или C:\…\playlist.m3u8" />
+        <button id="browsePlaylist" class="btn ghost" type="button">Обзор…</button>
+      </div>
+    </div>
+    <div class="field-col">
+      <label for="epgInput">EPG — ссылка (необязательно, иначе берётся из плейлиста)</label>
+      <input type="text" id="epgInput" placeholder="https://…/epg.xml.gz" />
+    </div>
+    <p class="dialog-sub" id="sourcesError" hidden></p>
+    <menu>
+      <button id="sourcesCancel" class="btn ghost" type="button">Отмена</button>
+      <button id="sourcesSave" class="btn" type="button">Сохранить</button>
+    </menu>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+{
+  "name": "iptv-match-center",
+  "version": "0.6.0",
+  "private": true,
+  "description": "IPTV sport guide: FotMob fixtures + EPG channel matching + VLC playback",
+  "main": "electron/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable",
+    "epg": "node scripts/epg-probe.js"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "koffi": "^3.1.6"
+  },
+  "build": {
+    "appId": "local.iptv-match-center.app",
+    "productName": "IPTV Матч-центр",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "config.example.json",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "IPTV Матч-центр",
+      "artifactName": "IPTV-Match-center Setup ${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "IPTV-Match-center-portable-${version}.exe"
+    }
+  }
+}

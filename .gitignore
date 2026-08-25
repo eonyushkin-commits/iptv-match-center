@@ -1,0 +1,14 @@
+node_modules/
+cache/
+dist/
+epg-sample.log
+
+# Personal playlist/EPG paths — config.example.json is the tracked template.
+config.json
+
+# Local Claude Code tool settings, not part of the project.
+.claude/settings.local.json
+
+# The playlist embeds a per-channel access token in every URL.
+playlist.m3u8
+*.m3u
