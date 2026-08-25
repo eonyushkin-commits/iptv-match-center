@@ -7,7 +7,6 @@ contextBridge.exposeInMainWorld('api', {
   choosePlaylist: () => ipcRenderer.invoke('playlist:choose'),
   getSources: () => ipcRenderer.invoke('sources:get'),
   saveSources: (data) => ipcRenderer.invoke('sources:save', data),
-  revealConfig: () => ipcRenderer.invoke('config:reveal'),
   chooseVlcPath: () => ipcRenderer.invoke('vlc:choose'),
   sync: () => ipcRenderer.invoke('guide:sync'),
   refreshScores: () => ipcRenderer.invoke('guide:refreshScores'),

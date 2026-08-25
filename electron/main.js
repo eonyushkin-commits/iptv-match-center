@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const store = require('./store');
@@ -133,8 +133,6 @@ ipcMain.handle('sources:save', async (_e, { playlistPath, epgUrl, vlcPath }) => 
   }
 });
 
-ipcMain.handle('config:reveal', () => shell.showItemInFolder(paths.configPath));
-
 /** Mirrors playlist:choose — a plain file picker, no side effects. The
  * "Источники" dialog collects it together with playlist/EPG and saves all
  * three at once via sources:save. */
@@ -182,7 +180,7 @@ ipcMain.handle('guide:refreshScores', async () => {
 ipcMain.handle('vlc:play', async (_e, { url }) => {
   const vlcPath = vlc.findVlcPath(config().vlcPath);
   if (!vlcPath) {
-    return { ok: false, error: 'VLC не найден. Установите VLC или укажите путь в config.json → vlcPath' };
+    return { ok: false, error: 'VLC не найден. Установите VLC или укажите путь в «Источники»' };
   }
   try {
     await vlc.play(vlcPath, url, vlcTargetBounds(), config().streamUserAgent);

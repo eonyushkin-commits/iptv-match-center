@@ -238,4 +238,4 @@ async function fixtures(daysBack, daysForward, onProgress = () => {}) {
   return all;
 }
 
-module.exports = { COMPETITIONS, fixtures, matchStatus };
+module.exports = { fixtures, matchStatus };
