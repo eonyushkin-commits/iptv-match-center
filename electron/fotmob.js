@@ -39,7 +39,13 @@ const COMPETITIONS = [
   { id: 55, name: 'Serie A', country: 'Italy' },
   { id: 54, name: 'Bundesliga', country: 'Germany' },
   { id: 146, name: '2. Bundesliga', country: 'Germany' },
+  // Промо/вылет плей-офф топ-дивизиона — отдельный турнир на FotMob только у
+  // Германии и Франции из топ-5 (проверено живьём по allLeagues: у Англии
+  // есть лишь квалы кубков, у Испании нет вообще ничего подобного, у Италии
+  // только женская Серия A — не мужской плей-офф). Добавлены только эти два.
+  { id: 9081, name: 'Bundesliga Qualification', country: 'Germany' },
   { id: 53, name: 'Ligue 1', country: 'France' },
+  { id: 9666, name: 'Ligue 1 Qualification', country: 'France' },
   { id: 42, name: 'Champions League', country: 'International' },
   { id: 73, name: 'Europa League', country: 'International' },
   { id: 10216, name: 'Conference League', country: 'International' },
@@ -72,13 +78,13 @@ const COMPETITIONS = [
   { id: 8924, name: 'Super Cup', country: 'Germany' },
   { id: 134, name: 'Coupe de France', country: 'France' },
   { id: 207, name: 'Trophée des champions', country: 'France' },
-  // Russia — every tournament FotMob tracks, not just RPL + Cup (explicit
-  // user request: "для России все турниры").
+  // Russia — originally every tournament FotMob tracks, not just RPL + Cup
+  // (explicit user request: "для России все турниры"). Second League (3rd
+  // tier) removed later by explicit request — the rest of the spread stays.
   { id: 193, name: 'Russian Cup', country: 'Russia' },
   { id: 195, name: 'Super Cup', country: 'Russia' },
   { id: 338, name: '1. Division', country: 'Russia' },
   { id: 9333, name: 'Premier League Qualification', country: 'Russia' },
-  { id: 9123, name: 'Second League', country: 'Russia' },
   // Бразилия, Аргентина — главная лига (без кубка, см. выше). Беларусь была
   // здесь же, убрана по прямой просьбе пользователя (слишком много ненужных
   // турниров в дефолтном списке).
