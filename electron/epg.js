@@ -150,25 +150,47 @@ function levenshtein(a, b) {
 // title ("Bare Knuckle FC", a boxing broadcast) produced a false-positive
 // card for Toronto FC–NYCFC on a channel that never showed the match, caught
 // live. Deliberately NOT filtering longer qualifier words ("United", "City",
-// "Athletic", "Real"): those are still needed — e.g. "Newcastle United"'s
-// "Ньюкасл" transliterates too far from "newcastle" to Levenshtein-match,
-// so "United"/"Юнайтед" is the only token that actually finds the fixture.
+// "Athletic", "Real") globally: those are still needed — e.g. "Newcastle
+// United"'s "Ньюкасл" transliterates too far from "newcastle" to
+// Levenshtein-match, so "United"/"Юнайтед" is the only token that actually
+// finds the fixture. See meaningfulTeamTokens() below for the other half of
+// this: a word shared with the *opponent* is excluded per-fixture instead.
 const GENERIC_TEAM_TOKENS = new Set(['fc', 'cf', 'sc', 'afc', 'cfc', 'fk', 'ac', 'sk']);
 
-/** Does this team plausibly appear somewhere in the programme title? */
-function teamInTitle(teamTokens, titleTokenSet) {
-  if (!teamTokens.length) return false;
-  // One matching token is enough — but only among the club's distinctive
-  // tokens, never a bare generic suffix alone (see GENERIC_TEAM_TOKENS).
-  // City/qualifier words ("Moscow", "St Petersburg") are the least reliable
-  // part of a team name to match: they transliterate inconsistently
-  // ("Москва" -> "moskva", not "moscow") and broadcasters often wrap them in
-  // parentheses, which normalize.tokens() strips outright (it was written
-  // for channel names, where "(HD)" is noise). Demanding more than the
-  // club's own distinctive name would zero out most Russian-league fixtures
-  // — verified live against "Zenit St Petersburg".
-  const distinctiveTokens = teamTokens.filter((t) => !GENERIC_TEAM_TOKENS.has(t));
-  const meaningfulTokens = distinctiveTokens.length ? distinctiveTokens : teamTokens;
+/**
+ * Tokens worth matching for one side of a fixture: the club's own tokens,
+ * minus globally-generic suffixes (GENERIC_TEAM_TOKENS) and minus anything
+ * also present in the *opponent's* name. That second part matters even for
+ * words that aren't globally generic: "Cardiff City" vs "Norwich City" share
+ * "city", and demanding just one matching token per side meant a title
+ * containing bare "city" (a kids' cartoon, a travel show, completely
+ * unrelated) satisfied *both* teams at once — 16 false-positive channels on
+ * one card, caught live. Falls back to the less-filtered token list only if
+ * filtering would otherwise leave nothing to match on at all.
+ */
+function meaningfulTeamTokens(teamTokens, opponentTokens) {
+  const opponentSet = new Set(opponentTokens);
+  const withoutGeneric = teamTokens.filter((t) => !GENERIC_TEAM_TOKENS.has(t));
+  const distinctive = withoutGeneric.filter((t) => !opponentSet.has(t));
+  if (distinctive.length) return distinctive;
+  if (withoutGeneric.length) return withoutGeneric;
+  return teamTokens;
+}
+
+/** Does this team plausibly appear somewhere in the programme title?
+ * `meaningfulTokens` drives the cheap/Levenshtein checks; `fullTokens` (the
+ * unfiltered team name) still goes into the whole-string similarity
+ * fallback, which is a high-bar comparison and doesn't need the filtering. */
+function teamInTitle(meaningfulTokens, titleTokenSet, fullTokens) {
+  if (!meaningfulTokens.length) return false;
+  // One matching token is enough — City/qualifier words ("Moscow", "St
+  // Petersburg") are the least reliable part of a team name to match: they
+  // transliterate inconsistently ("Москва" -> "moskva", not "moscow") and
+  // broadcasters often wrap them in parentheses, which normalize.tokens()
+  // strips outright (it was written for channel names, where "(HD)" is
+  // noise). Demanding more than the club's own distinctive name would zero
+  // out most Russian-league fixtures — verified live against "Zenit St
+  // Petersburg".
   if (meaningfulTokens.some((t) => titleTokenSet.has(t))) return true;
 
   // Cyrillic transliteration is letter-by-letter, not the "official" foreign
@@ -187,7 +209,7 @@ function teamInTitle(teamTokens, titleTokenSet) {
   // Token-set match catches "Реал Мадрид" vs "Real Madrid" (translit resolves
   // both to the same tokens) but not looser spelling drift, so fall back to
   // the fuzzy channel-name comparator against the whole title.
-  return similarity(teamTokens.join(' '), [...titleTokenSet].join(' ')) >= TEAM_THRESHOLD;
+  return similarity(fullTokens.join(' '), [...titleTokenSet].join(' ')) >= TEAM_THRESHOLD;
 }
 
 const WINDOW_MS = 90 * 60 * 1000;
@@ -202,6 +224,9 @@ function findBroadcastChannels(progList, home, away, kickoffMs) {
   const awayTokens = tokens(away);
   if (!homeTokens.length || !awayTokens.length) return [];
 
+  const homeMeaningful = meaningfulTeamTokens(homeTokens, awayTokens);
+  const awayMeaningful = meaningfulTeamTokens(awayTokens, homeTokens);
+
   const lo = kickoffMs - WINDOW_MS;
   const hi = kickoffMs + WINDOW_MS;
   const channelIds = new Set();
@@ -210,7 +235,7 @@ function findBroadcastChannels(progList, home, away, kickoffMs) {
     if (p.start < lo) continue;
     if (p.start > hi) break; // sorted by start — nothing further can match
     const titleTokens = new Set(tokens(p.title));
-    if (teamInTitle(homeTokens, titleTokens) && teamInTitle(awayTokens, titleTokens)) {
+    if (teamInTitle(homeMeaningful, titleTokens, homeTokens) && teamInTitle(awayMeaningful, titleTokens, awayTokens)) {
       channelIds.add(p.channelId);
     }
   }
