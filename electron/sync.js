@@ -22,7 +22,7 @@ async function run(config, onProgress = () => {}) {
   if (!url) throw new Error('EPG-фид не найден: нет url-tvg в плейлисте и epgUrl в конфиге');
 
   onProgress('Скачиваю расписание турниров…');
-  const fixtures = await fotmob.fixtures(DAYS_BACK, DAYS_FORWARD, onProgress);
+  const fixtures = await fotmob.fixtures(DAYS_BACK, DAYS_FORWARD, onProgress, config.disabledCompetitions);
 
   onProgress('Скачиваю EPG…');
   const xml = await epg.loadXmltv(url);

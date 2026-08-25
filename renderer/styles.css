@@ -450,6 +450,45 @@ dialog menu {
   padding: 0;
 }
 
+/* ---------- tournament checklist (in «Настройки») ---------- */
+
+.comp-list {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 4px 10px;
+}
+
+.comp-group-title {
+  position: sticky;
+  top: 0;
+  margin: 0;
+  padding: 6px 2px;
+  background: var(--panel);
+  font-family: var(--display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.comp-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.comp-item input { flex: 0 0 auto; }
+.comp-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }

@@ -15,7 +15,7 @@
         <h1>IPTV<br />Матч-центр</h1>
       </div>
       <div class="head-actions">
-        <button id="openSources" class="btn ghost">Источники</button>
+        <button id="openSettings" class="btn ghost">Настройки</button>
         <button id="sync" class="btn">Обновить</button>
       </div>
     </header>
@@ -46,8 +46,8 @@
     <div class="diag" id="diag" hidden></div>
   </aside>
 
-  <dialog id="sourcesDialog">
-    <h2>Источники</h2>
+  <dialog id="settingsDialog">
+    <h2>Настройки</h2>
     <div class="field-col">
       <label for="playlistInput">Плейлист — файл или ссылка</label>
       <div class="field-row">
@@ -66,10 +66,14 @@
         <button id="browseVlcPath" class="btn ghost" type="button">Обзор…</button>
       </div>
     </div>
-    <p class="dialog-sub" id="sourcesError" hidden></p>
+    <div class="field-col">
+      <label>Турниры</label>
+      <div class="comp-list" id="competitionsList"></div>
+    </div>
+    <p class="dialog-sub" id="settingsError" hidden></p>
     <menu>
-      <button id="sourcesCancel" class="btn ghost" type="button">Отмена</button>
-      <button id="sourcesSave" class="btn" type="button">Сохранить</button>
+      <button id="settingsCancel" class="btn ghost" type="button">Отмена</button>
+      <button id="settingsSave" class="btn" type="button">Сохранить</button>
     </menu>
   </dialog>
 

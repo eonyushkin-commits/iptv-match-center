@@ -344,21 +344,72 @@ el('variant').addEventListener('change', (e) => {
   play(current.event, current.broadcast, Number(e.target.value));
 });
 
-/* ---------------- sources dialog (playlist + EPG) ---------------- */
+/* ---------------- settings dialog (playlist + EPG + VLC + tournaments) ---------------- */
 
-function sourcesError(message) {
-  const p = el('sourcesError');
+function settingsError(message) {
+  const p = el('settingsError');
   p.hidden = !message;
   p.textContent = message || '';
 }
 
-el('openSources').addEventListener('click', async () => {
-  const { playlistPath, epgUrl, vlcPath } = await window.api.getSources();
+// Grouped by `country` (FotMob's own group name — see COMPETITIONS in
+// fotmob.js), "International" first then alphabetical, same order FotMob's
+// own competition directory uses. Static data (39 entries), no network call
+// needed to render this — unlike the full 558-competition catalog tried and
+// rejected earlier, this is just the curated default list with checkboxes.
+function renderCompetitionsList(competitions, disabledIds) {
+  const list = el('competitionsList');
+  list.replaceChildren();
+
+  const byCountry = new Map();
+  for (const c of competitions) {
+    if (!byCountry.has(c.country)) byCountry.set(c.country, []);
+    byCountry.get(c.country).push(c);
+  }
+  const countries = [...byCountry.keys()].sort((a, b) => {
+    if (a === 'International') return -1;
+    if (b === 'International') return 1;
+    return a.localeCompare(b);
+  });
+
+  for (const country of countries) {
+    const group = document.createElement('div');
+    group.className = 'comp-group';
+    const title = document.createElement('h3');
+    title.className = 'comp-group-title';
+    title.textContent = country;
+    group.append(title);
+
+    for (const c of byCountry.get(country)) {
+      const label = document.createElement('label');
+      label.className = 'comp-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = String(c.id);
+      cb.checked = !disabledIds.includes(c.id);
+      const span = document.createElement('span');
+      span.textContent = c.name;
+      label.append(cb, span);
+      group.append(label);
+    }
+    list.append(group);
+  }
+}
+
+function disabledCompetitionIds() {
+  return [...el('competitionsList').querySelectorAll('input[type="checkbox"]')]
+    .filter((cb) => !cb.checked)
+    .map((cb) => Number(cb.value));
+}
+
+el('openSettings').addEventListener('click', async () => {
+  const { playlistPath, epgUrl, vlcPath, competitions, disabledCompetitions } = await window.api.getSettings();
   el('playlistInput').value = playlistPath;
   el('epgInput').value = epgUrl;
   el('vlcPathInput').value = vlcPath;
-  sourcesError('');
-  el('sourcesDialog').showModal();
+  renderCompetitionsList(competitions, disabledCompetitions);
+  settingsError('');
+  el('settingsDialog').showModal();
 });
 
 el('browsePlaylist').addEventListener('click', async () => {
@@ -371,16 +422,16 @@ el('browseVlcPath').addEventListener('click', async () => {
   if (picked) el('vlcPathInput').value = picked;
 });
 
-el('sourcesCancel').addEventListener('click', () => el('sourcesDialog').close());
+el('settingsCancel').addEventListener('click', () => el('settingsDialog').close());
 
-el('sourcesSave').addEventListener('click', async () => {
+el('settingsSave').addEventListener('click', async () => {
   const playlistPath = el('playlistInput').value.trim();
   const epgUrl = el('epgInput').value.trim();
   const vlcPath = el('vlcPathInput').value.trim();
-  if (!playlistPath) { sourcesError('Укажите файл или ссылку на плейлист'); return; }
-  const res = await window.api.saveSources({ playlistPath, epgUrl, vlcPath });
-  if (!res.ok) { sourcesError(res.error); return; }
-  el('sourcesDialog').close();
+  if (!playlistPath) { settingsError('Укажите файл или ссылку на плейлист'); return; }
+  const res = await window.api.saveSettings({ playlistPath, epgUrl, vlcPath, disabledCompetitions: disabledCompetitionIds() });
+  if (!res.ok) { settingsError(res.error); return; }
+  el('settingsDialog').close();
   el('status').textContent = `Плейлист загружен: ${res.count} каналов · нажмите «Обновить»`;
 });
 
@@ -390,8 +441,8 @@ el('sourcesSave').addEventListener('click', async () => {
 
   if (!pl.exists) {
     el('status').textContent = pl.path
-      ? `Не удалось загрузить плейлист: ${pl.error || 'проверьте «Источники»'}`
-      : 'Плейлист не выбран — нажмите «Источники»';
+      ? `Не удалось загрузить плейлист: ${pl.error || 'проверьте «Настройки»'}`
+      : 'Плейлист не выбран — нажмите «Настройки»';
   } else if (guide) {
     el('status').textContent = `Сетка от ${TIME.format(new Date(guide.generatedAt))} · каналов: ${pl.count}`;
   } else {

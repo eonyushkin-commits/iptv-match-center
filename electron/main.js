@@ -7,6 +7,7 @@ const paths = require('./paths');
 const sync = require('./sync');
 const playlist = require('./playlist');
 const vlc = require('./vlc');
+const fotmob = require('./fotmob');
 
 let win = null;
 let channelsCache = null;
@@ -103,8 +104,8 @@ ipcMain.handle('playlist:status', async () => {
 });
 
 /** Just the file picker — returns the chosen path without saving it. The
- * "Источники" dialog collects playlist + EPG together and saves both at
- * once via `sources:save`. */
+ * "Настройки" dialog collects playlist + EPG together and saves both at
+ * once via `settings:save`. */
 ipcMain.handle('playlist:choose', async () => {
   const res = await dialog.showOpenDialog(win, {
     title: 'Выберите файл плейлиста',
@@ -115,17 +116,28 @@ ipcMain.handle('playlist:choose', async () => {
   return res.filePaths[0];
 });
 
-ipcMain.handle('sources:get', () => {
+ipcMain.handle('settings:get', () => {
   const raw = store.readJson(paths.configPath, {});
-  return { playlistPath: raw.playlistPath || '', epgUrl: raw.epgUrl || '', vlcPath: raw.vlcPath || '' };
+  return {
+    playlistPath: raw.playlistPath || '',
+    epgUrl: raw.epgUrl || '',
+    vlcPath: raw.vlcPath || '',
+    competitions: fotmob.COMPETITIONS,
+    disabledCompetitions: raw.disabledCompetitions || [],
+  };
 });
 
-ipcMain.handle('sources:save', async (_e, { playlistPath, epgUrl, vlcPath }) => {
+ipcMain.handle('settings:save', async (_e, { playlistPath, epgUrl, vlcPath, disabledCompetitions }) => {
   const p = (playlistPath || '').trim();
   if (!p) return { ok: false, error: 'Укажите файл или ссылку на плейлист' };
   const vp = (vlcPath || '').trim();
   if (vp && !fs.existsSync(vp)) return { ok: false, error: `Файл не найден: ${vp}` };
-  saveConfig({ playlistPath: p, epgUrl: (epgUrl || '').trim() || undefined, vlcPath: vp || undefined });
+  saveConfig({
+    playlistPath: p,
+    epgUrl: (epgUrl || '').trim() || undefined,
+    vlcPath: vp || undefined,
+    disabledCompetitions: Array.isArray(disabledCompetitions) && disabledCompetitions.length ? disabledCompetitions : undefined,
+  });
   try {
     return { ok: true, count: (await channels()).length };
   } catch (err) {
@@ -134,8 +146,8 @@ ipcMain.handle('sources:save', async (_e, { playlistPath, epgUrl, vlcPath }) => 
 });
 
 /** Mirrors playlist:choose — a plain file picker, no side effects. The
- * "Источники" dialog collects it together with playlist/EPG and saves all
- * three at once via sources:save. */
+ * "Настройки" dialog collects it together with playlist/EPG and saves all
+ * three at once via settings:save. */
 ipcMain.handle('vlc:choose', async () => {
   const res = await dialog.showOpenDialog(win, {
     title: 'Выберите vlc.exe',
@@ -149,10 +161,10 @@ ipcMain.handle('vlc:choose', async () => {
 ipcMain.handle('guide:sync', async () => {
   const cfg = config();
   if (!cfg.playlistPath) {
-    return { ok: false, error: 'Плейлист не выбран. Нажмите «Источники» и укажите файл или ссылку' };
+    return { ok: false, error: 'Плейлист не выбран. Нажмите «Настройки» и укажите файл или ссылку' };
   }
   if (!playlist.isUrl(cfg.playlistPath) && !fs.existsSync(cfg.playlistPath)) {
-    return { ok: false, error: 'Файл плейлиста не найден. Нажмите «Источники» и проверьте путь' };
+    return { ok: false, error: 'Файл плейлиста не найден. Нажмите «Настройки» и проверьте путь' };
   }
   const send = (text, done, total) => win?.webContents.send('sync:progress', { text, done, total });
   try {
@@ -180,7 +192,7 @@ ipcMain.handle('guide:refreshScores', async () => {
 ipcMain.handle('vlc:play', async (_e, { url }) => {
   const vlcPath = vlc.findVlcPath(config().vlcPath);
   if (!vlcPath) {
-    return { ok: false, error: 'VLC не найден. Установите VLC или укажите путь в «Источники»' };
+    return { ok: false, error: 'VLC не найден. Установите VLC или укажите путь в «Настройки»' };
   }
   try {
     await vlc.play(vlcPath, url, vlcTargetBounds(), config().streamUserAgent);

@@ -27,64 +27,67 @@ function pickFetch() {
 // keeps this list's names in sync with what actually shows on the card
 // (which already pulls `details.name`/`details.country` straight from
 // FotMob, see competitionFixtures() below — this `name` is only ever used
-// for the sync progress line, "Расписание: …").
+// for the sync progress line, "Расписание: …"). `country` is FotMob's own
+// group name for this list, same source — it drives the grouping in the
+// «Настройки» tournament checklist (see renderer/app.js), so a turned-off
+// tournament doesn't need a live network call just to know where to file it.
 const COMPETITIONS = [
   // Leagues
-  { id: 47, name: 'Premier League' },
-  { id: 48, name: 'Championship' },
-  { id: 87, name: 'LaLiga' },
-  { id: 55, name: 'Serie A' },
-  { id: 54, name: 'Bundesliga' },
-  { id: 146, name: '2. Bundesliga' },
-  { id: 53, name: 'Ligue 1' },
-  { id: 42, name: 'Champions League' },
-  { id: 73, name: 'Europa League' },
-  { id: 10216, name: 'Conference League' },
+  { id: 47, name: 'Premier League', country: 'England' },
+  { id: 48, name: 'Championship', country: 'England' },
+  { id: 87, name: 'LaLiga', country: 'Spain' },
+  { id: 55, name: 'Serie A', country: 'Italy' },
+  { id: 54, name: 'Bundesliga', country: 'Germany' },
+  { id: 146, name: '2. Bundesliga', country: 'Germany' },
+  { id: 53, name: 'Ligue 1', country: 'France' },
+  { id: 42, name: 'Champions League', country: 'International' },
+  { id: 73, name: 'Europa League', country: 'International' },
+  { id: 10216, name: 'Conference League', country: 'International' },
   // Основной этап ЛЧ/ЛЕ/ЛК начинается позже (сентябрь) и на момент добавления
   // ещё стоит на прошлом сезоне у FotMob — прямо сейчас вся активность идёт
   // в квалификационных раундах, это отдельные турниры на их стороне, не то
   // же самое, что «Лига чемпионов» с пустым расписанием.
-  { id: 10611, name: 'Champions League Qualification' },
-  { id: 10613, name: 'Europa League Qualification' },
-  { id: 10615, name: 'Conference League Qualification' },
-  { id: 61, name: 'Liga Portugal' },
-  { id: 57, name: 'Eredivisie' },
-  { id: 40, name: 'First Division A' },
-  { id: 63, name: 'Premier League' },
-  { id: 71, name: 'Süper Lig' },
-  { id: 130, name: 'MLS' },
-  { id: 64, name: 'Premiership' },
+  { id: 10611, name: 'Champions League Qualification', country: 'International' },
+  { id: 10613, name: 'Europa League Qualification', country: 'International' },
+  { id: 10615, name: 'Conference League Qualification', country: 'International' },
+  { id: 61, name: 'Liga Portugal', country: 'Portugal' },
+  { id: 57, name: 'Eredivisie', country: 'Netherlands' },
+  { id: 40, name: 'First Division A', country: 'Belgium' },
+  { id: 63, name: 'Premier League', country: 'Russia' },
+  { id: 71, name: 'Süper Lig', country: 'Turkiye' },
+  { id: 130, name: 'MLS', country: 'United States' },
+  { id: 64, name: 'Premiership', country: 'Scotland' },
   // Cups & super cups — только топ-5 (Англия/Испания/Италия/Германия/
   // Франция) и Россия, по прямой просьбе пользователя. Кубки остальных
   // стран (Нидерланды, Бельгия, Португалия, Турция, Бразилия, Аргентина)
   // здесь были и убраны — их лиги при этом остались выше.
-  { id: 132, name: 'FA Cup' },
-  { id: 133, name: 'EFL Cup' },
-  { id: 247, name: 'Community Shield' },
-  { id: 138, name: 'Copa del Rey' },
-  { id: 139, name: 'Supercopa de España' },
-  { id: 141, name: 'Coppa Italia' },
-  { id: 222, name: 'Supercoppa' },
-  { id: 209, name: 'DFB Pokal' },
-  { id: 8924, name: 'Super Cup' },
-  { id: 134, name: 'Coupe de France' },
-  { id: 207, name: 'Trophée des champions' },
+  { id: 132, name: 'FA Cup', country: 'England' },
+  { id: 133, name: 'EFL Cup', country: 'England' },
+  { id: 247, name: 'Community Shield', country: 'England' },
+  { id: 138, name: 'Copa del Rey', country: 'Spain' },
+  { id: 139, name: 'Supercopa de España', country: 'Spain' },
+  { id: 141, name: 'Coppa Italia', country: 'Italy' },
+  { id: 222, name: 'Supercoppa', country: 'Italy' },
+  { id: 209, name: 'DFB Pokal', country: 'Germany' },
+  { id: 8924, name: 'Super Cup', country: 'Germany' },
+  { id: 134, name: 'Coupe de France', country: 'France' },
+  { id: 207, name: 'Trophée des champions', country: 'France' },
   // Russia — every tournament FotMob tracks, not just RPL + Cup (explicit
   // user request: "для России все турниры").
-  { id: 193, name: 'Russian Cup' },
-  { id: 195, name: 'Super Cup' },
-  { id: 338, name: '1. Division' },
-  { id: 9333, name: 'Premier League Qualification' },
-  { id: 9123, name: 'Second League' },
+  { id: 193, name: 'Russian Cup', country: 'Russia' },
+  { id: 195, name: 'Super Cup', country: 'Russia' },
+  { id: 338, name: '1. Division', country: 'Russia' },
+  { id: 9333, name: 'Premier League Qualification', country: 'Russia' },
+  { id: 9123, name: 'Second League', country: 'Russia' },
   // Бразилия, Аргентина — главная лига (без кубка, см. выше). Беларусь была
   // здесь же, убрана по прямой просьбе пользователя (слишком много ненужных
   // турниров в дефолтном списке).
-  { id: 268, name: 'Serie A' },
-  { id: 112, name: 'Liga Profesional' },
+  { id: 268, name: 'Serie A', country: 'Brazil' },
+  { id: 112, name: 'Liga Profesional', country: 'Argentina' },
   // Отдельной квалификации у Копа Либертадорес на FotMob нет (в отличие от
   // УЕФА) — ранние раунды идут внутри самого турнира, один и тот же id.
   // Континентальный турнир, не подпадает под «кубки только топ-5+Россия».
-  { id: 45, name: 'Copa Libertadores' },
+  { id: 45, name: 'Copa Libertadores', country: 'International' },
 ];
 
 // FotMob's own bare league name is often ambiguous on its own ("Cup",
@@ -220,10 +223,16 @@ async function matchStatus(matchId) {
   }
 }
 
-/** All configured competitions. One competition failing doesn't sink the rest. */
-async function fixtures(daysBack, daysForward, onProgress = () => {}) {
+/**
+ * Every configured competition's fixtures, minus whatever the user turned
+ * off in «Настройки» (`disabledIds` — ids from `config.json.disabledCompetitions`,
+ * empty by default so an untouched install behaves exactly as before that
+ * checklist existed). One competition failing doesn't sink the rest.
+ */
+async function fixtures(daysBack, daysForward, onProgress = () => {}, disabledIds = []) {
   const all = [];
   for (const c of COMPETITIONS) {
+    if (disabledIds.includes(c.id)) continue;
     onProgress(`Расписание: ${c.name}`);
     try {
       all.push(...(await competitionFixtures(c.id, c.name, daysBack, daysForward)));
@@ -241,4 +250,4 @@ async function fixtures(daysBack, daysForward, onProgress = () => {}) {
   return all;
 }
 
-module.exports = { fixtures, matchStatus };
+module.exports = { COMPETITIONS, fixtures, matchStatus };
