@@ -22,66 +22,69 @@ function pickFetch() {
 // FotMob league ids — hardcoded, not in config.json (personal single-user
 // app, a config knob nobody else will ever touch). Verified live via
 // https://www.fotmob.com/api/data/allLeagues before adding each one.
+// Names are FotMob's own English labels (`allLeagues`/`leagues?id=` →
+// `details.name`), not translated — explicit user request, and it also
+// keeps this list's names in sync with what actually shows on the card
+// (which already pulls `details.name`/`details.country` straight from
+// FotMob, see competitionFixtures() below — this `name` is only ever used
+// for the sync progress line, "Расписание: …").
 const COMPETITIONS = [
   // Leagues
-  { id: 47, name: 'АПЛ' },
-  { id: 48, name: 'Чемпионшип' },
-  { id: 87, name: 'Ла Лига' },
-  { id: 55, name: 'Серия A' },
-  { id: 54, name: 'Бундеслига' },
-  { id: 53, name: 'Лига 1' },
-  { id: 42, name: 'Лига чемпионов' },
-  { id: 73, name: 'Лига Европы' },
-  { id: 10216, name: 'Лига конференций' },
+  { id: 47, name: 'Premier League' },
+  { id: 48, name: 'Championship' },
+  { id: 87, name: 'LaLiga' },
+  { id: 55, name: 'Serie A' },
+  { id: 54, name: 'Bundesliga' },
+  { id: 146, name: '2. Bundesliga' },
+  { id: 53, name: 'Ligue 1' },
+  { id: 42, name: 'Champions League' },
+  { id: 73, name: 'Europa League' },
+  { id: 10216, name: 'Conference League' },
   // Основной этап ЛЧ/ЛЕ/ЛК начинается позже (сентябрь) и на момент добавления
   // ещё стоит на прошлом сезоне у FotMob — прямо сейчас вся активность идёт
   // в квалификационных раундах, это отдельные турниры на их стороне, не то
   // же самое, что «Лига чемпионов» с пустым расписанием.
-  { id: 10611, name: 'Квалификация Лиги чемпионов' },
-  { id: 10613, name: 'Квалификация Лиги Европы' },
-  { id: 10615, name: 'Квалификация Лиги конференций' },
-  { id: 61, name: 'Примейра-лига' },
-  { id: 57, name: 'Эредивизи' },
-  { id: 40, name: 'Про-лига (Бельгия)' },
-  { id: 63, name: 'РПЛ' },
-  { id: 71, name: 'Суперлига (Турция)' },
+  { id: 10611, name: 'Champions League Qualification' },
+  { id: 10613, name: 'Europa League Qualification' },
+  { id: 10615, name: 'Conference League Qualification' },
+  { id: 61, name: 'Liga Portugal' },
+  { id: 57, name: 'Eredivisie' },
+  { id: 40, name: 'First Division A' },
+  { id: 63, name: 'Premier League' },
+  { id: 71, name: 'Süper Lig' },
   { id: 130, name: 'MLS' },
-  // Cups & super cups
-  { id: 132, name: 'Кубок Англии' },
-  { id: 133, name: 'Кубок английской лиги' },
-  { id: 247, name: 'Суперкубок Англии' },
-  { id: 138, name: 'Кубок Испании' },
-  { id: 139, name: 'Суперкубок Испании' },
-  { id: 141, name: 'Кубок Италии' },
-  { id: 222, name: 'Суперкубок Италии' },
-  { id: 209, name: 'Кубок Германии' },
-  { id: 8924, name: 'Суперкубок Германии' },
-  { id: 134, name: 'Кубок Франции' },
-  { id: 207, name: 'Суперкубок Франции' },
-  { id: 235, name: 'Кубок Нидерландов' },
-  { id: 149, name: 'Кубок Бельгии' },
-  { id: 266, name: 'Суперкубок Бельгии' },
-  { id: 186, name: 'Кубок Португалии' },
-  { id: 188, name: 'Суперкубок Португалии' },
-  { id: 151, name: 'Кубок Турции' },
-  { id: 166, name: 'Суперкубок Турции' },
+  { id: 64, name: 'Premiership' },
+  // Cups & super cups — только топ-5 (Англия/Испания/Италия/Германия/
+  // Франция) и Россия, по прямой просьбе пользователя. Кубки остальных
+  // стран (Нидерланды, Бельгия, Португалия, Турция, Бразилия, Аргентина)
+  // здесь были и убраны — их лиги при этом остались выше.
+  { id: 132, name: 'FA Cup' },
+  { id: 133, name: 'EFL Cup' },
+  { id: 247, name: 'Community Shield' },
+  { id: 138, name: 'Copa del Rey' },
+  { id: 139, name: 'Supercopa de España' },
+  { id: 141, name: 'Coppa Italia' },
+  { id: 222, name: 'Supercoppa' },
+  { id: 209, name: 'DFB Pokal' },
+  { id: 8924, name: 'Super Cup' },
+  { id: 134, name: 'Coupe de France' },
+  { id: 207, name: 'Trophée des champions' },
   // Russia — every tournament FotMob tracks, not just RPL + Cup (explicit
   // user request: "для России все турниры").
-  { id: 193, name: 'Кубок России' },
-  { id: 195, name: 'Суперкубок России' },
-  { id: 338, name: 'Первая лига' },
-  { id: 9333, name: 'Стыковые матчи РПЛ' },
-  { id: 9123, name: 'Вторая лига' },
-  // Бразилия, Аргентина, Беларусь — главная лига + главный кубок каждой.
-  { id: 268, name: 'Серия A (Бразилия)' },
-  { id: 9067, name: 'Кубок Бразилии' },
-  { id: 112, name: 'Лига Профессионал (Аргентина)' },
-  { id: 9305, name: 'Кубок Аргентины' },
-  { id: 263, name: 'Премьер-лига (Беларусь)' },
-  { id: 9521, name: 'Кубок Беларуси' },
+  { id: 193, name: 'Russian Cup' },
+  { id: 195, name: 'Super Cup' },
+  { id: 338, name: '1. Division' },
+  { id: 9333, name: 'Premier League Qualification' },
+  { id: 9123, name: 'Second League' },
+  // Бразилия, Аргентина — главная лига (без кубка, см. выше). Беларусь была
+  // здесь же, убрана по прямой просьбе пользователя (слишком много ненужных
+  // турниров в дефолтном списке).
+  { id: 268, name: 'Serie A' },
+  { id: 112, name: 'Liga Profesional' },
   // Отдельной квалификации у Копа Либертадорес на FotMob нет (в отличие от
   // УЕФА) — ранние раунды идут внутри самого турнира, один и тот же id.
-  { id: 45, name: 'Кубок Либертадорес' },
+  // Континентальный турнир, не подпадает под «кубки только топ-5+Россия».
+  { id: 45, name: 'Copa Libertadores' },
 ];
 
 // FotMob's own bare league name is often ambiguous on its own ("Cup",
