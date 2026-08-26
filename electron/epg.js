@@ -196,13 +196,20 @@ function teamInTitle(meaningfulTokens, titleTokenSet, fullTokens) {
   // Cyrillic transliteration is letter-by-letter, not the "official" foreign
   // spelling, and the two disagree often: "Барселона" -> "barselona" (с -> s)
   // vs the real "Barcelona" (c), "Ювентус" -> "yuventus" vs "Juventus" (ю ->
-  // yu, not j). One or two edits on a same-length-ish token catches this
-  // without hand-listing club names.
+  // yu, not j), "Юнайтед" -> "yunaited" vs "United" (distance 2 at length 6)
+  // — a flat "distance <= 2" tolerance is far too loose for *short* tokens
+  // though: "Lille" (5) vs an unrelated "Killer" or "Hill" is also distance
+  // 2, but that's half the word, not an edit-noise margin — matched a
+  // Lille–PSG fixture to a German crime show and a "Silent Hill" listing on
+  // live data, caught live. A flat cutoff can't fit both — length 6 needs
+  // distance 2 allowed, length 5 needs it refused — so the allowance scales
+  // with token length (~1 edit per 3 characters) instead of one fixed number.
   for (const t of meaningfulTokens) {
     if (t.length < 5) continue;
+    const maxDist = Math.floor(t.length / 3);
     for (const titleToken of titleTokenSet) {
       if (Math.abs(titleToken.length - t.length) > 2) continue;
-      if (levenshtein(t, titleToken) <= 2) return true;
+      if (levenshtein(t, titleToken) <= maxDist) return true;
     }
   }
 
@@ -218,14 +225,35 @@ const WINDOW_MS = 90 * 60 * 1000;
  * Finds which EPG channels carry a known fixture: programmes on sport
  * channels within ±90 minutes of kickoff whose title names both teams.
  * `progList` must be sorted by start (as returned by `programmes()`).
+ *
+ * `homeAlt`/`awayAlt` are FotMob's own short names (`homeShort`/`awayShort`
+ * in sync.js) — optional, only used when they actually differ from the full
+ * name. Broadcasters often abbreviate ("Lille – PSG", not "Lille – Paris
+ * Saint-Germain") and the full-name-only match was silently missing those:
+ * live-checked on Lille–PSG, the full name found 2 channels, "PSG" found 3
+ * *more* that the full name never could. Short names are 2-4 letters, below
+ * the Levenshtein branch's length-5 floor and too short for the whole-string
+ * similarity fallback to false-positive on — so this only ever adds exact
+ * literal matches, no new fuzzy surface.
  */
-function findBroadcastChannels(progList, home, away, kickoffMs) {
+function findBroadcastChannels(progList, home, away, kickoffMs, homeAlt, awayAlt) {
   const homeTokens = tokens(home);
   const awayTokens = tokens(away);
   if (!homeTokens.length || !awayTokens.length) return [];
 
-  const homeMeaningful = meaningfulTeamTokens(homeTokens, awayTokens);
-  const awayMeaningful = meaningfulTeamTokens(awayTokens, homeTokens);
+  const homeAltTokens = homeAlt && homeAlt !== home ? tokens(homeAlt) : null;
+  const awayAltTokens = awayAlt && awayAlt !== away ? tokens(awayAlt) : null;
+
+  // Opponent's token pool includes both name forms, so a word shared with
+  // either — including a short-name collision — still gets excluded (same
+  // reasoning as the Cardiff City/Norwich City fix).
+  const homePool = [...homeTokens, ...(homeAltTokens || [])];
+  const awayPool = [...awayTokens, ...(awayAltTokens || [])];
+
+  const homeMeaningful = meaningfulTeamTokens(homeTokens, awayPool);
+  const awayMeaningful = meaningfulTeamTokens(awayTokens, homePool);
+  const homeAltMeaningful = homeAltTokens ? meaningfulTeamTokens(homeAltTokens, awayPool) : null;
+  const awayAltMeaningful = awayAltTokens ? meaningfulTeamTokens(awayAltTokens, homePool) : null;
 
   const lo = kickoffMs - WINDOW_MS;
   const hi = kickoffMs + WINDOW_MS;
@@ -235,7 +263,11 @@ function findBroadcastChannels(progList, home, away, kickoffMs) {
     if (p.start < lo) continue;
     if (p.start > hi) break; // sorted by start — nothing further can match
     const titleTokens = new Set(tokens(p.title));
-    if (teamInTitle(homeMeaningful, titleTokens, homeTokens) && teamInTitle(awayMeaningful, titleTokens, awayTokens)) {
+    const homeHit = teamInTitle(homeMeaningful, titleTokens, homeTokens)
+      || (homeAltMeaningful && teamInTitle(homeAltMeaningful, titleTokens, homeAltTokens));
+    const awayHit = teamInTitle(awayMeaningful, titleTokens, awayTokens)
+      || (awayAltMeaningful && teamInTitle(awayAltMeaningful, titleTokens, awayAltTokens));
+    if (homeHit && awayHit) {
       channelIds.add(p.channelId);
     }
   }

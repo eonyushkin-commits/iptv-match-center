@@ -45,7 +45,7 @@ async function run(config, onProgress = () => {}) {
   // Only what's live or ahead — past results aren't what this app is for.
   const upcoming = fixtures.filter((f) => f.status !== 'finished');
   const allEvents = upcoming.map((f, i) => {
-    const channelIds = epg.findBroadcastChannels(progList, f.home, f.away, f.start);
+    const channelIds = epg.findBroadcastChannels(progList, f.home, f.away, f.start, f.homeShort, f.awayShort);
     const broadcasts = channelIds.map((channelId) => {
       const streams = byTvgId.get(channelId) || [];
       broadcastCount++;
