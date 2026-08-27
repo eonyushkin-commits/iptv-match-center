@@ -221,6 +221,38 @@ function teamInTitle(meaningfulTokens, titleTokenSet, fullTokens) {
 
 const WINDOW_MS = 90 * 60 * 1000;
 
+// Clubs whose real Russian broadcast name doesn't derive from transliterating
+// the FotMob (English/local) name at all — a translated exonym ("Bayern
+// München" is called "Бавария", the region name, not a rendering of
+// "Bayern"), a Cyrillic-only abbreviation FotMob's own shortName can't supply
+// ("ПСЖ" for PSG — "псж" transliterates to nothing like "PSG"), or a name
+// short/diacritic-heavy enough that the Levenshtein fallback structurally
+// can't bridge it (see epg.js's `teamInTitle` — the length-5 floor blocks
+// "Köln"/"keln", diacritics like ş/ç never survive translit's Cyrillic-only
+// map). Found by walking every team across all 39 tracked tournaments and
+// checking which ones have no plain-ASCII fallback token, then verifying
+// each candidate spelling against this exact matching logic (and, for the
+// less obvious ones, a live search) rather than guessing — see CLAUDE.md.
+// Deliberately small: the vast majority of teams already match fine through
+// transliteration alone, this only covers the confirmed exceptions.
+const RU_NICKNAMES = {
+  'Bayern München': 'Бавария',
+  'Paris Saint-Germain': 'ПСЖ',
+  '1. FC Köln': 'Кёльн',
+  'Beşiktaş': 'Бешикташ',
+  'FC København': 'Копенгаген',
+  'Başakşehir': 'Башакшехир',
+  'Raków Częstochowa': 'Ракув Ченстохова',
+  'Huracán': 'Уракан',
+  'Çorum FK': 'Чорум',
+};
+
+/** Distinct non-empty name forms for one side: the full name, FotMob's own
+ * short name, and a curated Russian nickname, whichever apply. */
+function nameForms(name, alt) {
+  return [...new Set([name, alt, RU_NICKNAMES[name]].filter(Boolean))];
+}
+
 /**
  * Finds which EPG channels carry a known fixture: programmes on sport
  * channels within ±90 minutes of kickoff whose title names both teams.
@@ -234,26 +266,22 @@ const WINDOW_MS = 90 * 60 * 1000;
  * *more* that the full name never could. Short names are 2-4 letters, below
  * the Levenshtein branch's length-5 floor and too short for the whole-string
  * similarity fallback to false-positive on — so this only ever adds exact
- * literal matches, no new fuzzy surface.
+ * literal matches, no new fuzzy surface. `RU_NICKNAMES` (above) folds in the
+ * same way as a third form, for the handful of clubs where translit itself
+ * can't bridge the gap at all.
  */
 function findBroadcastChannels(progList, home, away, kickoffMs, homeAlt, awayAlt) {
-  const homeTokens = tokens(home);
-  const awayTokens = tokens(away);
-  if (!homeTokens.length || !awayTokens.length) return [];
+  const homeForms = nameForms(home, homeAlt).map((f) => ({ form: f, tokens: tokens(f) })).filter((f) => f.tokens.length);
+  const awayForms = nameForms(away, awayAlt).map((f) => ({ form: f, tokens: tokens(f) })).filter((f) => f.tokens.length);
+  if (!homeForms.length || !awayForms.length) return [];
 
-  const homeAltTokens = homeAlt && homeAlt !== home ? tokens(homeAlt) : null;
-  const awayAltTokens = awayAlt && awayAlt !== away ? tokens(awayAlt) : null;
-
-  // Opponent's token pool includes both name forms, so a word shared with
-  // either — including a short-name collision — still gets excluded (same
-  // reasoning as the Cardiff City/Norwich City fix).
-  const homePool = [...homeTokens, ...(homeAltTokens || [])];
-  const awayPool = [...awayTokens, ...(awayAltTokens || [])];
-
-  const homeMeaningful = meaningfulTeamTokens(homeTokens, awayPool);
-  const awayMeaningful = meaningfulTeamTokens(awayTokens, homePool);
-  const homeAltMeaningful = homeAltTokens ? meaningfulTeamTokens(homeAltTokens, awayPool) : null;
-  const awayAltMeaningful = awayAltTokens ? meaningfulTeamTokens(awayAltTokens, homePool) : null;
+  // Opponent's token pool spans every form on their side, so a word shared
+  // with any of them — including a nickname or short-name collision — still
+  // gets excluded (same reasoning as the Cardiff City/Norwich City fix).
+  const homePool = homeForms.flatMap((f) => f.tokens);
+  const awayPool = awayForms.flatMap((f) => f.tokens);
+  for (const f of homeForms) f.meaningful = meaningfulTeamTokens(f.tokens, awayPool);
+  for (const f of awayForms) f.meaningful = meaningfulTeamTokens(f.tokens, homePool);
 
   const lo = kickoffMs - WINDOW_MS;
   const hi = kickoffMs + WINDOW_MS;
@@ -263,10 +291,8 @@ function findBroadcastChannels(progList, home, away, kickoffMs, homeAlt, awayAlt
     if (p.start < lo) continue;
     if (p.start > hi) break; // sorted by start — nothing further can match
     const titleTokens = new Set(tokens(p.title));
-    const homeHit = teamInTitle(homeMeaningful, titleTokens, homeTokens)
-      || (homeAltMeaningful && teamInTitle(homeAltMeaningful, titleTokens, homeAltTokens));
-    const awayHit = teamInTitle(awayMeaningful, titleTokens, awayTokens)
-      || (awayAltMeaningful && teamInTitle(awayAltMeaningful, titleTokens, awayAltTokens));
+    const homeHit = homeForms.some((f) => teamInTitle(f.meaningful, titleTokens, f.tokens));
+    const awayHit = awayForms.some((f) => teamInTitle(f.meaningful, titleTokens, f.tokens));
     if (homeHit && awayHit) {
       channelIds.add(p.channelId);
     }
