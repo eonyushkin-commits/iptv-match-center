@@ -1,6 +1,6 @@
 {
   "name": "iptv-match-center",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "IPTV sport guide: FotMob fixtures + EPG channel matching + VLC playback",
   "main": "electron/main.js",
