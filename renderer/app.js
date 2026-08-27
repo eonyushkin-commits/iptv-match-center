@@ -5,6 +5,7 @@ const el = (id) => document.getElementById(id);
 let guide = null;
 let filter = 'all'; // 'all' | 'live' | 'upcoming'
 let current = null; // { event, broadcast, streamIndex }
+let favoriteIds = new Set();
 
 /* ---------------- playback (VLC, its own window) ---------------- */
 
@@ -139,6 +140,28 @@ function venueLine(event) {
   return p;
 }
 
+// Corner star toggle — favoriting is what drives the kickoff notification
+// (see checkFavoriteKickoffs below), not a general-purpose bookmark. Keyed
+// by `event.id` (FotMob's own match id, stable across syncs).
+function starButton(event) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'star-btn';
+  const sync = (isFav) => {
+    btn.classList.toggle('is-active', isFav);
+    btn.textContent = isFav ? '★' : '☆';
+    btn.title = isFav ? 'Убрать из избранного' : 'Добавить в избранное — уведомление в начале матча';
+  };
+  sync(favoriteIds.has(event.id));
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation(); // don't also trigger the card's own play() click
+    const ids = await window.api.toggleFavorite(event.id);
+    favoriteIds = new Set(ids);
+    sync(favoriteIds.has(event.id));
+  });
+  return btn;
+}
+
 function matchCard(event) {
   const card = document.createElement('article');
   card.className = 'match-card';
@@ -159,6 +182,10 @@ function matchCard(event) {
     badge.textContent = dateBadge(event.start);
   }
   top.append(badge);
+  // Flex child of card-top, after the badge -- its own `align-items: center`
+  // lines the star up with whichever badge is present instead of a fixed
+  // pixel offset that only happened to match the shorter, text-only one.
+  top.append(starButton(event));
   card.append(top);
 
   card.append(teamsGrid(event));
@@ -336,6 +363,31 @@ el('sync').addEventListener('click', doFullSync);
 setInterval(() => { if (guide) doFullSync(); }, 60 * 60 * 1000);
 setInterval(() => { if (guide) doScoreRefresh(); }, 3 * 60 * 1000);
 
+/* ---------------- favorites: kickoff notification ---------------- */
+
+// Fired once per favorited match, right as it kicks off. `notifiedThisSession`
+// is intentionally in-memory only (not persisted) — if the app was closed
+// through the actual kickoff, firing a "started N hours ago" notification
+// on the next launch would be confusing, not useful; the window below
+// already limits it to matches that started genuinely recently.
+const notifiedThisSession = new Set();
+const KICKOFF_NOTICE_WINDOW_MS = 90 * 1000; // >= the poll interval below, with margin for timer drift
+
+function checkFavoriteKickoffs() {
+  if (!guide) return;
+  const now = Date.now();
+  for (const e of flatEvents()) {
+    if (!favoriteIds.has(e.id)) continue;
+    if (notifiedThisSession.has(e.id)) continue;
+    if (e.start > now || now - e.start > KICKOFF_NOTICE_WINDOW_MS) continue;
+    notifiedThisSession.add(e.id);
+    const n = new Notification(`⭐ ${e.home} — ${e.away}`, { body: `Начинается сейчас · ${e.tournament}` });
+    n.onclick = () => window.focus();
+  }
+}
+
+setInterval(checkFavoriteKickoffs, 30 * 1000);
+
 window.api.onProgress(({ text, done, total }) => {
   el('status').textContent = total ? `${text} (${done}/${total})` : text;
 });
@@ -436,8 +488,11 @@ el('settingsSave').addEventListener('click', async () => {
 });
 
 (async () => {
+  if (Notification.permission === 'default') Notification.requestPermission();
+
   const pl = await window.api.playlistStatus();
   guide = await window.api.cachedGuide();
+  favoriteIds = new Set(await window.api.getFavorites());
 
   if (!pl.exists) {
     el('status').textContent = pl.path

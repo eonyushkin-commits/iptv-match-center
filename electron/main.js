@@ -8,6 +8,7 @@ const sync = require('./sync');
 const playlist = require('./playlist');
 const vlc = require('./vlc');
 const fotmob = require('./fotmob');
+const favorites = require('./favorites');
 
 let win = null;
 let channelsCache = null;
@@ -188,6 +189,9 @@ ipcMain.handle('guide:refreshScores', async () => {
     return { ok: false, error: err.message };
   }
 });
+
+ipcMain.handle('favorites:get', () => favorites.load());
+ipcMain.handle('favorites:toggle', (_e, id) => favorites.toggle(id));
 
 ipcMain.handle('vlc:play', async (_e, { url }) => {
   const vlcPath = vlc.findVlcPath(config().vlcPath);
