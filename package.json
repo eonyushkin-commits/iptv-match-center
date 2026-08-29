@@ -57,7 +57,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "IPTV Матч-центр",
-      "artifactName": "IPTV-Match-center Setup ${version}.${ext}"
+      "artifactName": "IPTV-Match-center-Setup-${version}.${ext}"
     },
     "portable": {
       "artifactName": "IPTV-Match-center-portable-${version}.exe"
