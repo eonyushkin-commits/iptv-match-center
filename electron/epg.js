@@ -245,6 +245,13 @@ const RU_NICKNAMES = {
   'Raków Częstochowa': 'Ракув Ченстохова',
   'Huracán': 'Уракан',
   'Çorum FK': 'Чорум',
+  // English-pronunciation transliteration, not spelling transliteration —
+  // "Eagles" said aloud collapses the "ea" to one long "и" sound, nothing
+  // like the letter-by-letter "eagles" the team's own name tokenizes to.
+  // Found live: a real "АЗ Алкмаар – Гоу Эхед Иглс" broadcast existed and
+  // wasn't matched, caught during a same-day audit against FotMob's own
+  // schedule (see CLAUDE.md).
+  'Go Ahead Eagles': 'Гоу Эхед Иглс',
 };
 
 /** Distinct non-empty name forms for one side: the full name, FotMob's own
