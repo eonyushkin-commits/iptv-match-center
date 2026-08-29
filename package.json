@@ -3,6 +3,7 @@
   "version": "1.2.0",
   "private": true,
   "description": "IPTV sport guide: FotMob fixtures + EPG channel matching + VLC playback",
+  "license": "MIT",
   "main": "electron/main.js",
   "type": "commonjs",
   "scripts": {
