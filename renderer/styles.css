@@ -89,6 +89,19 @@ html, body {
   min-height: 31px;
 }
 
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--cool) 12%, var(--panel));
+  border-bottom: 1px solid var(--rule);
+}
+.update-banner .btn { flex: 0 0 auto; padding: 4px 10px; font-size: 11px; }
+
 .filters {
   display: flex;
   gap: 6px;

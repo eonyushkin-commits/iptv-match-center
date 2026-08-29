@@ -392,6 +392,20 @@ window.api.onProgress(({ text, done, total }) => {
   el('status').textContent = total ? `${text} (${done}/${total})` : text;
 });
 
+/* ---------------- auto-update ---------------- */
+
+// Fires once the new version is already downloaded and sitting on disk —
+// installing just quits and swaps files, nothing left to wait on. No
+// separate "update available" state: silently downloading in the
+// background and only surfacing once it's actually ready to install is
+// less noise than a two-step "found it… now downloading…" banner.
+window.api.onUpdateReady(({ version }) => {
+  el('updateBannerText').textContent = `Доступна версия ${version}`;
+  el('updateBanner').hidden = false;
+});
+
+el('updateInstall').addEventListener('click', () => window.api.installUpdate());
+
 el('variant').addEventListener('change', (e) => {
   play(current.event, current.broadcast, Number(e.target.value));
 });

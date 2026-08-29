@@ -9,6 +9,7 @@ const playlist = require('./playlist');
 const vlc = require('./vlc');
 const fotmob = require('./fotmob');
 const favorites = require('./favorites');
+const { autoUpdater } = require('electron-updater');
 
 let win = null;
 let channelsCache = null;
@@ -77,10 +78,30 @@ function createWindow() {
   win.on('closed', () => vlc.stop());
 }
 
+// Checked once per launch, same cadence as the full guide sync — not worth
+// polling more often for a desktop app the user starts and stops by hand.
+// GitHub Releases is a public feed now (repo made public specifically for
+// this), so no token lives in the shipped app; `checkForUpdatesAndNotify()`
+// itself is skipped in dev (`app.isPackaged` false) since there's no
+// packaged version to compare against and it would just log noise every run.
+function checkForUpdates() {
+  if (!app.isPackaged) return;
+  autoUpdater.checkForUpdates().catch((err) => {
+    // Network hiccup or no releases yet — quietly retry next launch, same
+    // as a failed guide sync doesn't block the app either.
+    console.error('update check failed:', err.message);
+  });
+}
+
+autoUpdater.on('update-downloaded', (info) => {
+  win?.webContents.send('update:ready', { version: info.version });
+});
+
 app.whenReady().then(() => {
   paths.ensureConfig();
   store.setRoot(paths.cacheDir);
   createWindow();
+  checkForUpdates();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -192,6 +213,11 @@ ipcMain.handle('guide:refreshScores', async () => {
 
 ipcMain.handle('favorites:get', () => favorites.load());
 ipcMain.handle('favorites:toggle', (_e, id) => favorites.toggle(id));
+
+// Only ever called after 'update:ready' fired, so the download already
+// finished — this just quits and swaps the installed files, no further
+// network involved.
+ipcMain.handle('update:install', () => autoUpdater.quitAndInstall());
 
 ipcMain.handle('vlc:play', async (_e, { url }) => {
   const vlcPath = vlc.findVlcPath(config().vlcPath);

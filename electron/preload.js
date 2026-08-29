@@ -14,4 +14,6 @@ contextBridge.exposeInMainWorld('api', {
   refreshScores: () => ipcRenderer.invoke('guide:refreshScores'),
   onProgress: (cb) => ipcRenderer.on('sync:progress', (_e, payload) => cb(payload)),
   vlcPlay: (url) => ipcRenderer.invoke('vlc:play', { url }),
+  onUpdateReady: (cb) => ipcRenderer.on('update:ready', (_e, payload) => cb(payload)),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
 });
