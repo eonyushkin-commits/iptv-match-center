@@ -155,7 +155,18 @@ function levenshtein(a, b) {
 // Levenshtein-match, so "United"/"Юнайтед" is the only token that actually
 // finds the fixture. See meaningfulTeamTokens() below for the other half of
 // this: a word shared with the *opponent* is excluded per-fixture instead.
-const GENERIC_TEAM_TOKENS = new Set(['fc', 'cf', 'sc', 'afc', 'cfc', 'fk', 'ac', 'sk']);
+//
+// "wanderers" added after a live false positive that neither of those two
+// mechanisms could catch: "Bolton Wanderers" (own tokens: bolton, wanderers)
+// matched a completely different fixture's title, "Wolverhampton Wanderers
+// vs. Stoke City", purely on the shared "wanderers"/"city" suffixes -- the
+// *opponent* was Lincoln City, which doesn't share either word, so
+// meaningfulTeamTokens() had nothing to subtract; the collision was with a
+// third team's match entirely, which no per-fixture exclusion can see.
+// Confirmed safe to add globally: every "___ Wanderers" club tracked (Bolton,
+// Wolverhampton, Wycombe) already has its own long, distinctive first word,
+// so none of them actually depend on "wanderers" to be found.
+const GENERIC_TEAM_TOKENS = new Set(['fc', 'cf', 'sc', 'afc', 'cfc', 'fk', 'ac', 'sk', 'wanderers']);
 
 /**
  * Tokens worth matching for one side of a fixture: the club's own tokens,
