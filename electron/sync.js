@@ -88,12 +88,21 @@ async function run(config, onProgress = () => {}) {
         const otherFixture = upcoming.some((o) => o.id !== fid
           && epg.findBroadcastChannels(progs, o.home, o.away, f.start, o.homeShort, o.awayShort).length > 0);
         if (otherFixture) return true;
-        // A different sport starting anywhere between kickoff and roughly
-        // the final whistle: the channel can't have been carrying this match
-        // through that. Anything starting *before* kickoff is fair game —
-        // that's just the preceding slot ending as the match begins — and
-        // `programmes()` keeps no end times, so the match length stands in.
-        return progs.some((p) => p.start >= f.start && p.start < f.start + WINDOW_MS && epg.isOtherSport(p.title));
+        // A different sport on that channel when the match kicked off, or
+        // starting while it was still on. `stop` is the real end time from
+        // the feed, so a programme that merely *precedes* kickoff is
+        // correctly ignored while one that started an hour earlier and runs
+        // straight through it is not — a Polish volleyball match doing
+        // exactly that (13:45, kickoff 14:45) slipped past an earlier
+        // version that only looked at start times. Feeds without `stop`
+        // fall back to the match length as the assumed duration.
+        return progs.some((p) => {
+          if (!epg.isOtherSport(p.title)) return false;
+          const ends = p.stop ?? (p.start + WINDOW_MS);
+          const coversKickoff = p.start <= f.start && ends > f.start;
+          const startsDuringMatch = p.start > f.start && p.start < f.start + WINDOW_MS;
+          return coversKickoff || startsDuringMatch;
+        });
       },
     );
   } catch (err) {

@@ -121,7 +121,16 @@ function programmes(xmlText, channels) {
     const title = tag(m[2], 'title');
     if (!title) continue;
 
-    out.push({ channelId, title, start });
+    // XMLTV states the end time too. Nothing in the team search needs it —
+    // that works off a window around kickoff — but the FotMob broadcaster
+    // cross-check does: "was this channel showing something else when the
+    // match kicked off?" is only answerable with a real end time. Guessing
+    // a duration instead let a volleyball match that started an hour before
+    // kickoff, and ran straight through it, pass as "just the previous
+    // slot". Some feeds omit it, so callers must handle null.
+    const stop = parseXmltvTime(attr(attrs, 'stop')) ?? null;
+
+    out.push({ channelId, title, start, stop });
   }
 
   out.sort((a, b) => a.start - b.start);
@@ -349,7 +358,7 @@ function findBroadcastChannels(progList, home, away, kickoffMs, homeAlt, awayAlt
 // `\bавтоспорт\b` silently never matches — the whole guard quietly did
 // nothing until a live run showed the motorsport listing still slipping
 // through.
-const OTHER_SPORTS = /(?<!\p{L})(баскетбол|хоккей|теннис|волейбол|гандбол|автоспорт|мотоспорт|биатлон|бокс|регби|гольф|крикет|дартс|снукер|формула|basketball|hockey|tennis|volleyball|handball|motorsport|biathlon|boxing|rugby|golf|cricket|darts|snooker|nba|nhl|mlb|ufc)(?!\p{L})/iu;
+const OTHER_SPORTS = /(?<!\p{L})(баскетбол|хоккей|теннис|волейбол|гандбол|автоспорт|мотоспорт|биатлон|бокс|регби|гольф|крикет|дартс|снукер|формула|хокей|siatkówka|siatkowka|koszykówka|koszykowka|hokej|żużel|zuzel|tenis|volleyball|basketball|eishockey|handball|volei|baschet|hochei|handbal|pallavolo|pallamano|basket|voleibol|baloncesto|balonmano|basquetebol|hóquei|hoquei|andebol|ténis|voleybol|basketbol|hentbol|hokey|volejbal|basketbal|házená|hazena|volleybal|ijshockey|volleyboll|ishockey|handboll|hockey|tennis|motorsport|biathlon|boxing|rugby|golf|cricket|darts|snooker|nba|nhl|mlb|ufc)(?!\p{L})/iu;
 
 /** Does this programme title plainly announce a different sport? */
 function isOtherSport(title) {
