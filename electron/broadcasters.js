@@ -1,5 +1,5 @@
 'use strict';
-const { similarity, tokens } = require('./normalize');
+const { similarity } = require('./normalize');
 
 // Same undocumented-FotMob-API pattern as fotmob.js -- no key, must go
 // through electron.net.fetch (plain fetch gets the same bot-protection
@@ -41,37 +41,6 @@ async function fetchListings(countryCode) {
 // Promise.all silently returning 0/393) -- chunking to a modest concurrency
 // keeps the speedup without that risk.
 const BATCH_SIZE = 8;
-
-/**
- * Is this station name a whole *family* of channels rather than one of them?
- * FotMob often answers with the brand ("Now Sports", "Match TV") where the
- * playlist carries a dozen numbered members of it. That alone would be
- * harmless, except `similarity()` strips quality markers while hard-gating
- * on digits — so a bare "Now Sports" scores 0 against "Now Sports 1..7" and
- * exactly 100 against "Now Sports 4K", landing the claim on whichever member
- * happens to be distinguished by a quality suffix instead of a number.
- * Caught live twice: "Now Sports" put a LaLiga match on HK: Now Sports 4K
- * (which was showing the US Open), and "Match TV" put RPL matches on Матч!
- * FHD (autosport, then a Spanish match) when they were on Матч! Премьер.
- *
- * A name counts as a family when the playlist holds more than one *distinct*
- * channel name extending it. Quality variants of one channel collapse to the
- * same token list, so "Sky Sports Main Event" (HD + UHD entries) reads as a
- * single specific channel and still matches, while "Now Sports" sees 14
- * distinct continuations and is refused.
- */
-function isFamilyName(stationTokens, countryChannels) {
-  if (!stationTokens.length) return true;
-  const extensions = new Set();
-  for (const c of countryChannels) {
-    const ct = tokens(c.name);
-    if (ct.length < stationTokens.length) continue;
-    if (!stationTokens.every((t, i) => ct[i] === t)) continue;
-    extensions.add(ct.join(' '));
-    if (extensions.size > 1) return true;
-  }
-  return false;
-}
 
 // Kickoff to final whistle, generously. Only used to decide whether two
 // claims on one channel overlap, so erring long is the safe direction.
@@ -217,9 +186,6 @@ async function findBroadcasters(fixtures, channels, onProgress = () => {}, epgCo
         for (const e of entries) {
           const stationName = e.station?.name || e.station?.callSign;
           if (!stationName) continue;
-          const stationTokens = tokens(stationName);
-          // A brand that covers many channels can't be pinned to one of them.
-          if (isFamilyName(stationTokens, countryChannels)) continue;
           const ch = countryChannels.find((c) => similarity(stationName, c.name) === 100);
           if (!ch) continue;
           if (!result.has(f.id)) result.set(f.id, new Set());
