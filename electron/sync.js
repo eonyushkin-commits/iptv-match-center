@@ -9,10 +9,14 @@ const playlist = require('./playlist');
 const DAYS_BACK = 1;
 const DAYS_FORWARD = 6;
 
-// Same ±90 minutes epg.js searches around a kickoff — kept in step so the
-// "is the EPG showing something else here?" cross-check looks at exactly
-// the window the main matcher would have.
-const WINDOW_MS = 90 * 60 * 1000;
+// То же окно ±90 минут, что epg.js ищет вокруг свистка — берётся оттуда, а
+// не объявляется заново: две копии одного числа с комментарием «держать
+// синхронно» перекладывали эту синхронизацию на человека.
+const { WINDOW_MS } = epg;
+
+// Столько запросов к FotMob одновременно в лёгком обновлении счёта — та же
+// величина, что в broadcasters.js, по той же причине.
+const SCORE_BATCH_SIZE = 8;
 
 /**
  * @param onProgress (text) => void
@@ -197,14 +201,20 @@ async function refreshScores(guide) {
   const targets = guide.events.filter((e) => e.start <= now && e.status !== 'finished');
   if (!targets.length) return guide;
 
-  await Promise.all(targets.map(async (e) => {
-    const fresh = await fotmob.matchStatus(e.id);
-    if (!fresh) return;
-    e.status = fresh.status;
-    e.homeScore = fresh.homeScore;
-    e.awayScore = fresh.awayScore;
-    e.clock = fresh.clock;
-  }));
+  // Кусками, а не все разом: обычно живых матчей единицы, но в субботний
+  // вечер их бывает и два десятка, и это тот же недокументированный хост,
+  // ради которого в broadcasters.js уже введён батчинг — держать здесь
+  // безлимитный Promise.all было непоследовательно.
+  for (let i = 0; i < targets.length; i += SCORE_BATCH_SIZE) {
+    await Promise.all(targets.slice(i, i + SCORE_BATCH_SIZE).map(async (e) => {
+      const fresh = await fotmob.matchStatus(e.id);
+      if (!fresh) return;
+      e.status = fresh.status;
+      e.homeScore = fresh.homeScore;
+      e.awayScore = fresh.awayScore;
+      e.clock = fresh.clock;
+    }));
+  }
 
   // Same "only live or ahead" rule as run() — a match that just finished
   // drops off here instead of waiting for the next full sync.

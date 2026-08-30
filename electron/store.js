@@ -17,9 +17,16 @@ function readJson(p, fallback) {
   }
 }
 
+// Через временный файл и переименование, а не поверх живого. guide.json
+// весит сотни килобайт; падение (или выключение машины) посреди записи
+// оставляло обрезанный JSON, а readJson на нём молча отдаёт fallback — со
+// стороны это выглядит как «сетка пропала без причины». Переименование в
+// пределах одного каталога атомарно и на Windows заменяет существующий файл.
 function writeJson(p, value) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(value, null, 2));
+  const tmp = `${p}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2));
+  fs.renameSync(tmp, p);
 }
 
 module.exports = { setRoot, readJson, writeJson, get root() { return root; } };

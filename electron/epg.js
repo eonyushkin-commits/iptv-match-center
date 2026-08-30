@@ -219,7 +219,16 @@ function levenshtein(a, b) {
 // Confirmed safe to add globally: every "___ Wanderers" club tracked (Bolton,
 // Wolverhampton, Wycombe) already has its own long, distinctive first word,
 // so none of them actually depend on "wanderers" to be found.
-const GENERIC_TEAM_TOKENS = new Set(['fc', 'cf', 'sc', 'afc', 'cfc', 'fk', 'ac', 'sk', 'wanderers']);
+// "west" — тот же случай, что "wanderers", найден при проверке словаря на
+// ложные срабатывания: пара «Newcastle United – West Ham United» ловила
+// заголовок «Newcastle United - West Bromwich Albion» (3 канала в живом
+// фиде). Совпадение снова с ТРЕТЬИМ матчем, а не с соперником по своей
+// паре, — вычитание токенов соперника такое не видит по конструкции. Баг
+// не новый: старый код ловил ровно то же, просто на него никто не смотрел.
+// Проверено по всем 298 командам в окне: «west» есть только у West Ham
+// United (остаётся ham/united) и West Bromwich Albion (bromwich/albion) —
+// ни одна на него как на единственное отличительное слово не опирается.
+const GENERIC_TEAM_TOKENS = new Set(['fc', 'cf', 'sc', 'afc', 'cfc', 'fk', 'ac', 'sk', 'wanderers', 'west']);
 
 /**
  * Tokens worth matching for one side of a fixture: the club's own tokens,
@@ -358,6 +367,18 @@ const RU_NICKNAMES = {
   // wasn't matched, caught during a same-day audit against FotMob's own
   // schedule (see CLAUDE.md).
   'Go Ahead Eagles': 'Гоу Эхед Иглс',
+  // Четвёртый вид разрыва, найденный не аудитом команд, а первым же прогоном
+  // npm test: слово, которое единственное могло бы связать имя с заголовком,
+  // отбирает у него СОПЕРНИК. «Ньюкасл» -> nyukasl, до «newcastle» 5 правок
+  // при допуске 3, так что мостом работает только «Юнайтед» — а в паре двух
+  // «юнайтедов» meaningfulTeamTokens() вычитает его у обеих сторон разом, и
+  // не остаётся ничего. У «Вест Хэм» своя беда: vest/hem короче порога длины
+  // 5, до Левенштейн-ветки они не доходят вовсе.
+  // Аудит 369 команд этот класс пропустил структурно — он спрашивал, есть ли
+  // пригодный токен у АНГЛИЙСКОГО имени (у «newcastle» есть), а не
+  // дотягивается ли до него русское написание.
+  'Newcastle United': 'Ньюкасл',
+  'West Ham United': 'Вест Хэм',
 };
 
 /** Distinct non-empty name forms for one side: the full name, FotMob's own
@@ -437,4 +458,4 @@ function isOtherSport(title) {
   return OTHER_SPORTS.test(title);
 }
 
-module.exports = { loadXmltv, programmes, findBroadcastChannels, isOtherSport, attr, tag };
+module.exports = { loadXmltv, programmes, findBroadcastChannels, isOtherSport, attr, tag, WINDOW_MS };

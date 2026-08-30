@@ -2,6 +2,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const http = require('http');
+const netSockets = require('node:net'); // Node-модуль, не наш electron/net.js
 const crypto = require('crypto');
 const koffi = require('koffi');
 
@@ -57,9 +58,27 @@ function place(hwnd, x, y, width, height) {
 
 let current = null; // { child, hwnd, httpPort, httpPassword }
 
+/** Порт, который ОС отдала как свободный. Здесь было захардкожено 39457:
+ * если он занят (другая программа, второй экземпляр приложения), HTTP-
+ * интерфейс VLC не поднимается — и переключение канала перестаёт работать
+ * совсем, причём молча. */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = netSockets.createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+/** @returns подтвердил ли VLC команду. Раньше промис резолвился без
+ * результата при любом исходе, поэтому неудача выглядела для пользователя
+ * как «клик по каналу ничего не делает»: ни переключения, ни ошибки. */
 function httpCommand(params) {
   return new Promise((resolve) => {
-    if (!current) return resolve();
+    if (!current) return resolve(false);
     const qs = new URLSearchParams(params).toString();
     const req = http.get({
       host: '127.0.0.1',
@@ -67,9 +86,13 @@ function httpCommand(params) {
       path: `/requests/status.xml?${qs}`,
       auth: `:${current.httpPassword}`,
       timeout: 3000,
-    }, (res) => { res.resume(); res.on('end', resolve); });
-    req.on('error', () => resolve()); // best-effort — a failed switch just leaves the old channel playing
-    req.on('timeout', () => { req.destroy(); resolve(); });
+    }, (res) => {
+      const ok = res.statusCode >= 200 && res.statusCode < 300;
+      res.resume();
+      res.on('end', () => resolve(ok));
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
   });
 }
 
@@ -82,12 +105,18 @@ function httpCommand(params) {
  */
 async function play(vlcPath, url, bounds, userAgent) {
   if (current) {
-    await httpCommand({ command: 'pl_empty' });
-    await httpCommand({ command: 'in_play', input: url });
-    return;
+    const emptied = await httpCommand({ command: 'pl_empty' });
+    const switched = emptied && await httpCommand({ command: 'in_play', input: url });
+    if (switched) return;
+    // Интерфейс управления не отвечает: VLC завис, порт перехватили, или
+    // процесс уже мёртв, а мы об этом ещё не знаем. Раньше на этом всё и
+    // заканчивалось — клик по другому каналу молча не делал ничего.
+    // Перезапуск — ровно то, что делалось до появления HTTP-интерфейса:
+    // окно моргнёт, зато канал действительно переключится.
+    stop();
   }
 
-  const httpPort = 39457;
+  const httpPort = await freePort();
   const httpPassword = crypto.randomBytes(12).toString('hex');
   const args = [
     url,
