@@ -12,6 +12,36 @@ const GROUP_COUNTRY = {
 // Name prefixes the provider uses ("UK: Sky Sports ..."). Some are not ISO.
 const PREFIX_COUNTRY = { UK: 'GB', INT: null, SR: 'RS' };
 
+// Spelled-out country names/adjectives, for providers whose `group-title`
+// says "Germany Sports" or "Polska VIP" instead of a coded prefix — a
+// fallback source, not a replacement for the prefix/group-number ones
+// above. Deliberately NOT matching on `tvg-id` word-fragments the way the
+// other three do: a slug like "al-jazeera-hd" contains "al" (Albania's own
+// code) as pure coincidence, not a country marker, and that class of
+// collision isn't reliably distinguishable from a real one — see CLAUDE.md.
+const COUNTRY_WORDS = {
+  UK: 'GB', ENGLAND: 'GB', BRITAIN: 'GB',
+  US: 'US', USA: 'US',
+  GERMANY: 'DE', DEUTSCHLAND: 'DE',
+  SPAIN: 'ES', ESPANA: 'ES', ESPAÑA: 'ES',
+  ITALY: 'IT', ITALIA: 'IT',
+  FRANCE: 'FR',
+  POLAND: 'PL', POLSKA: 'PL',
+  RUSSIA: 'RU', РОССИЯ: 'RU',
+  PORTUGAL: 'PT',
+  TURKEY: 'TR', TURKIYE: 'TR',
+};
+
+/** `group-title` spelling out a country name ("Germany Sports", "Polska
+ * VIP") rather than a coded prefix. Whole-word match only — a substring
+ * check would light up on e.g. "Turkey" inside an unrelated word. */
+function countryFromGroupWords(group) {
+  if (!group) return null;
+  const words = group.toUpperCase().match(/[A-ZÀ-ÖЀ-ӿ]+/gu) || [];
+  for (const w of words) if (w in COUNTRY_WORDS) return COUNTRY_WORDS[w];
+  return null;
+}
+
 const ATTR = /([\w-]+)="([^"]*)"/g;
 
 /** The playlist declares its own EPG feed in the #EXTM3U header. */
@@ -70,6 +100,7 @@ function parseText(text) {
         // current one instead uses a separate #EXTGRP line below, which —
         // when present — overrides this as more specific/dedicated info.
         group: a['group-title'] || null,
+        tvgCountry: a['tvg-country'] || null,
       };
     } else if (line.startsWith('#EXTGRP:') && pending) {
       pending.group = line.slice(8).trim();
@@ -79,12 +110,19 @@ function parseText(text) {
       const gNum = Number((pending.group || '').match(/^(\d+)\./)?.[1]);
       const prefix = pending.name.match(/^([A-Z]{2,3}):\s/)?.[1];
       let country = null;
-      if (prefix) {
+      if (pending.tvgCountry) {
+        // The one explicit, dedicated signal a playlist can carry — trusted
+        // as-is, uppercased to match everything else's ISO-alpha-2 casing.
+        country = pending.tvgCountry.trim().toUpperCase() || null;
+      } else if (prefix) {
         country = prefix in PREFIX_COUNTRY ? PREFIX_COUNTRY[prefix] : prefix;
       } else if (gNum) {
         country = gNum <= 13 ? 'RU' : (GROUP_COUNTRY[gNum] ?? null);
+      } else {
+        country = countryFromGroupWords(pending.group);
       }
       pending.country = country;
+      delete pending.tvgCountry; // only needed transiently above, not part of the channel's public shape
 
       channels.push(pending);
       pending = null;

@@ -3,10 +3,16 @@ const path = require('path');
 const store = require('./store');
 const fotmob = require('./fotmob');
 const epg = require('./epg');
+const broadcasters = require('./broadcasters');
 const playlist = require('./playlist');
 
 const DAYS_BACK = 1;
 const DAYS_FORWARD = 6;
+
+// Same ±90 minutes epg.js searches around a kickoff — kept in step so the
+// "is the EPG showing something else here?" cross-check looks at exactly
+// the window the main matcher would have.
+const WINDOW_MS = 90 * 60 * 1000;
 
 function dateKey(ms) {
   return new Date(ms).toISOString().slice(0, 10);
@@ -41,11 +47,64 @@ async function run(config, onProgress = () => {}) {
   for (const list of byTvgId.values()) list.sort((a, b) => b.quality - a.quality);
 
   onProgress('Сопоставляю с каналами…');
-  let broadcastCount = 0;
   // Only what's live or ahead — past results aren't what this app is for.
   const upcoming = fixtures.filter((f) => f.status !== 'finished');
+
+  // EPG-title matches first: they're the trustworthy half (the title
+  // literally names both teams), and the FotMob broadcaster source below
+  // uses them to settle its own contradictions.
+  const epgByFixture = new Map();
+  for (const f of upcoming) {
+    epgByFixture.set(f.id, new Set(epg.findBroadcastChannels(progList, f.home, f.away, f.start, f.homeShort, f.awayShort)));
+  }
+
+  // FotMob's own "where to watch" data, direct id lookup — a fast bonus on
+  // top of the EPG-title search, not a replacement for it: covers
+  // broadcasters whose own EPG never carries team names at all (Sky Sports
+  // UK's "Saturday Night Football" style branded slots). It answers at the
+  // rights-holder level rather than per-channel-per-minute, so it filters
+  // its own contradictions internally — see dropUnsound() in
+  // broadcasters.js. One country failing (or FotMob's endpoint changing
+  // shape) doesn't block the rest of the sync — same resilience as
+  // everything else FotMob-sourced here.
+  let extraBroadcasts = new Map();
+  try {
+    const byFixtureId = new Map(upcoming.map((f) => [f.id, f]));
+    extraBroadcasts = await broadcasters.findBroadcasters(
+      upcoming, channels, onProgress,
+      (fid, chId) => epgByFixture.get(fid)?.has(chId) || false,
+      // Does the EPG contradict the claim — either by putting some *other*
+      // fixture on that channel then (same "names both teams" bar as the
+      // main path), or by showing a different sport entirely in the kickoff
+      // slot? Both are direct evidence the channel wasn't carrying this
+      // match, whatever FotMob's rights-level answer says.
+      (fid, chId) => {
+        const f = byFixtureId.get(fid);
+        if (!f) return false;
+        const lo = f.start - WINDOW_MS;
+        const hi = f.start + WINDOW_MS;
+        const progs = progList.filter((p) => p.channelId === chId && p.start >= lo && p.start <= hi);
+        if (!progs.length) return false;
+        const otherFixture = upcoming.some((o) => o.id !== fid
+          && epg.findBroadcastChannels(progs, o.home, o.away, f.start, o.homeShort, o.awayShort).length > 0);
+        if (otherFixture) return true;
+        // A different sport starting anywhere between kickoff and roughly
+        // the final whistle: the channel can't have been carrying this match
+        // through that. Anything starting *before* kickoff is fair game —
+        // that's just the preceding slot ending as the match begins — and
+        // `programmes()` keeps no end times, so the match length stands in.
+        return progs.some((p) => p.start >= f.start && p.start < f.start + WINDOW_MS && epg.isOtherSport(p.title));
+      },
+    );
+  } catch (err) {
+    onProgress(`Вещатели FotMob недоступны: ${err.message}`);
+  }
+
+  let broadcastCount = 0;
   const allEvents = upcoming.map((f, i) => {
-    const channelIds = epg.findBroadcastChannels(progList, f.home, f.away, f.start, f.homeShort, f.awayShort);
+    const epgIds = epgByFixture.get(f.id) || new Set();
+    const extraIds = extraBroadcasts.get(f.id) || [];
+    const channelIds = [...new Set([...epgIds, ...extraIds])];
     const broadcasts = channelIds.map((channelId) => {
       const streams = byTvgId.get(channelId) || [];
       broadcastCount++;

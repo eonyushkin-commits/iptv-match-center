@@ -191,8 +191,10 @@ function meaningfulTeamTokens(teamTokens, opponentTokens) {
 /** Does this team plausibly appear somewhere in the programme title?
  * `meaningfulTokens` drives the cheap/Levenshtein checks; `fullTokens` (the
  * unfiltered team name) still goes into the whole-string similarity
- * fallback, which is a high-bar comparison and doesn't need the filtering. */
-function teamInTitle(meaningfulTokens, titleTokenSet, fullTokens) {
+ * fallback, which is a high-bar comparison and doesn't need the filtering.
+ * `titleWasCyrillic` refers to the *raw* title, before tokenising — by the
+ * time we have tokens everything is Latin, so the caller has to remember. */
+function teamInTitle(meaningfulTokens, titleTokenSet, fullTokens, titleWasCyrillic) {
   if (!meaningfulTokens.length) return false;
   // One matching token is enough — City/qualifier words ("Moscow", "St
   // Petersburg") are the least reliable part of a team name to match: they
@@ -215,11 +217,23 @@ function teamInTitle(meaningfulTokens, titleTokenSet, fullTokens) {
   // live data, caught live. A flat cutoff can't fit both — length 6 needs
   // distance 2 allowed, length 5 needs it refused — so the allowance scales
   // with token length (~1 edit per 3 characters) instead of one fixed number.
+  //
+  // That whole allowance only makes sense for a title that *was* Cyrillic:
+  // the noise it forgives is transliteration noise. A title already written
+  // in Latin has no such gap — at most a dropped diacritic ("Malaga" for
+  // "Málaga", "Besiktas" for "Beşiktaş"), which is a character *swap* and so
+  // never changes the word's length. Insertions and deletions in a Latin
+  // title mean a genuinely different word, and at distance 2 unrelated words
+  // collide readily: a Nat Geo documentary, "Malika: la reina leona", matched
+  // BOTH sides of Rodina–Baltika at once (rodina~reina, baltika~malika, two
+  // edits each) and put a wildlife channel on an RPL card, caught live. So
+  // for Latin titles the fuzzy step is narrowed to equal-length tokens.
   for (const t of meaningfulTokens) {
     if (t.length < 5) continue;
     const maxDist = Math.floor(t.length / 3);
     for (const titleToken of titleTokenSet) {
       if (Math.abs(titleToken.length - t.length) > 2) continue;
+      if (!titleWasCyrillic && titleToken.length !== t.length) continue;
       if (levenshtein(t, titleToken) <= maxDist) return true;
     }
   }
@@ -309,8 +323,9 @@ function findBroadcastChannels(progList, home, away, kickoffMs, homeAlt, awayAlt
     if (p.start < lo) continue;
     if (p.start > hi) break; // sorted by start — nothing further can match
     const titleTokens = new Set(tokens(p.title));
-    const homeHit = homeForms.some((f) => teamInTitle(f.meaningful, titleTokens, f.tokens));
-    const awayHit = awayForms.some((f) => teamInTitle(f.meaningful, titleTokens, f.tokens));
+    const wasCyrillic = /\p{Script=Cyrillic}/u.test(p.title);
+    const homeHit = homeForms.some((f) => teamInTitle(f.meaningful, titleTokens, f.tokens, wasCyrillic));
+    const awayHit = awayForms.some((f) => teamInTitle(f.meaningful, titleTokens, f.tokens, wasCyrillic));
     if (homeHit && awayHit) {
       channelIds.add(p.channelId);
     }
@@ -319,4 +334,26 @@ function findBroadcastChannels(progList, home, away, kickoffMs, homeAlt, awayAlt
   return [...channelIds];
 }
 
-module.exports = { loadXmltv, programmes, findBroadcastChannels, attr, tag };
+// Sports that aren't football, named plainly enough in a programme title to
+// settle the question. Only used to *reject* a claim from the FotMob
+// broadcaster source (see broadcasters.js) when the channel demonstrably had
+// something else on: that source answers at the rights-holder level, so it
+// happily says "Матч ТВ" for a match that channel wasn't actually carrying —
+// caught live with motorsport ("Автоспорт. Российская серия кольцевых
+// гонок") and basketball ("Швеция – Франция. Баскетбол") sitting in the
+// exact kickoff slot. Deliberately not consulted by the normal title search:
+// there a title has to name both teams anyway, which no other sport's
+// listing will do by accident.
+// Unicode-aware boundaries, NOT `\b`: JavaScript's `\b` is defined against
+// ASCII `\w`, so a Cyrillic word has no word boundary at its edges and
+// `\bавтоспорт\b` silently never matches — the whole guard quietly did
+// nothing until a live run showed the motorsport listing still slipping
+// through.
+const OTHER_SPORTS = /(?<!\p{L})(баскетбол|хоккей|теннис|волейбол|гандбол|автоспорт|мотоспорт|биатлон|бокс|регби|гольф|крикет|дартс|снукер|формула|basketball|hockey|tennis|volleyball|handball|motorsport|biathlon|boxing|rugby|golf|cricket|darts|snooker|nba|nhl|mlb|ufc)(?!\p{L})/iu;
+
+/** Does this programme title plainly announce a different sport? */
+function isOtherSport(title) {
+  return OTHER_SPORTS.test(title);
+}
+
+module.exports = { loadXmltv, programmes, findBroadcastChannels, isOtherSport, attr, tag };

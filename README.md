@@ -118,6 +118,7 @@ electron/
   normalize.js    канонизация имён (каналов и команд)
   store.js        JSON-кэш
   favorites.js    избранные матчи (id → favorites.json)
+  broadcasters.js «где смотреть» с FotMob, по странам плейлиста
 renderer/         только лента матчей, сам плеер полностью снаружи (см. «Как устроено воспроизведение»)
 scripts/          epg-probe (разведка формата EPG-фида)
 ```
