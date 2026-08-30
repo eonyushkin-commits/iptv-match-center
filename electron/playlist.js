@@ -144,7 +144,9 @@ const isUrl = (source) => /^https?:\/\//i.test(source);
  */
 async function load(source) {
   if (isUrl(source)) {
-    const res = await fetch(source);
+    // Таймаут по той же причине, что у EPG-фида и запросов к FotMob: без
+    // него подвисшая закачка вешает весь синк без возможности отменить.
+    const res = await fetch(source, { signal: AbortSignal.timeout(30000) });
     if (!res.ok) throw new Error(`HTTP ${res.status} ${source}`);
     return parseText(await res.text());
   }

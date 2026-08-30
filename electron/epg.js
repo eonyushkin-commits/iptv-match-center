@@ -44,24 +44,66 @@ function untar(buf) {
  * decompressing is always exactly one `gunzipSync` away from either XML
  * text directly or, for a tar.gz feed, a tar archive with the XML inside.
  */
-async function loadXmltv(url) {
-  const file = cachePath(url);
-  let gz;
-  if (fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < XMLTV_TTL_MS) {
-    gz = fs.readFileSync(file);
-  } else {
-    const res = await fetch(url, { redirect: 'follow' });
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    const isGz = buf[0] === 0x1f && buf[1] === 0x8b;
-    gz = isGz ? buf : zlib.gzipSync(buf);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, gz);
-  }
+function unpack(gz) {
   const decompressed = zlib.gunzipSync(gz);
   const xml = decompressed[0] === 0x3c /* '<' */ ? decompressed : untar(decompressed);
   if (!xml) throw new Error('Не удалось распаковать EPG-фид (неизвестный формат архива)');
   return xml.toString('utf8');
+}
+
+// Фид весит десятки мегабайт, так что таймаут щедрый: он здесь не про
+// «медленно», а про «повисло навсегда». Без него подвисшая закачка вешала
+// весь синк молча — с заблокированной кнопкой «Обновить» и без способа
+// отменить.
+const XMLTV_TIMEOUT_MS = 120000;
+
+/** Файлы кэша разведены по URL (см. cachePath), но удалять их было некому:
+ * на машине автора накопилось 170 МБ от четырёх разных провайдеров, и в
+ * упакованной сборке это растёт в %APPDATA% у каждого, кто хоть раз сменил
+ * источник. Протухшее всё равно будет перекачано — хранить его незачем. */
+function pruneCache(keep) {
+  let names;
+  try {
+    names = fs.readdirSync(store.root);
+  } catch {
+    return; // папки ещё нет — чистить нечего
+  }
+  for (const name of names) {
+    if (!/^epg-[0-9a-f]+\.xml\.gz$/.test(name)) continue;
+    const p = path.join(store.root, name);
+    if (p === keep) continue;
+    try {
+      if (Date.now() - fs.statSync(p).mtimeMs >= XMLTV_TTL_MS) fs.unlinkSync(p);
+    } catch { /* исчез сам или занят другим процессом — не наша забота */ }
+  }
+}
+
+async function loadXmltv(url) {
+  const file = cachePath(url);
+  // На каждом заходе, а не только после закачки: пока текущий фид свежий,
+  // закачки не происходит вовсе — и чужие протухшие файлы лежали бы до
+  // ближайшего обновления. Стоит один readdir по горстке файлов.
+  pruneCache(file);
+
+  if (fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < XMLTV_TTL_MS) {
+    try {
+      return unpack(fs.readFileSync(file));
+    } catch {
+      // Битый файл (оборвалась запись, кончилось место) держал бы синк
+      // мёртвым все шесть часов TTL: mtime свежий, значит перекачки не будет,
+      // а распаковка падает на каждом заходе. Выкидываем и качаем заново.
+      try { fs.unlinkSync(file); } catch { /* уже нет */ }
+    }
+  }
+
+  const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(XMLTV_TIMEOUT_MS) });
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const isGz = buf[0] === 0x1f && buf[1] === 0x8b;
+  const gz = isGz ? buf : zlib.gzipSync(buf);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, gz);
+  return unpack(gz);
 }
 
 // Attribute order varies between feeds (and even within one — `channel` comes
@@ -84,6 +126,8 @@ const tag = (s, name) => {
   const m = s.match(new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`));
   return m ? decodeEntities(m[1].replace(/\s+/g, ' ').trim()) : '';
 };
+
+const CYRILLIC = /\p{Script=Cyrillic}/u;
 
 /** "20260820184500 +0000" -> ms since epoch. */
 function parseXmltvTime(s) {
@@ -255,6 +299,34 @@ function teamInTitle(meaningfulTokens, titleTokenSet, fullTokens, titleWasCyrill
 
 const WINDOW_MS = 90 * 60 * 1000;
 
+// Токены заголовка и его алфавит — по первому обращению, дальше с самой
+// передачи. findBroadcastChannels() зовётся для каждого матча и раньше
+// токенизировала одни и те же заголовки по кругу: на живом фиде это 208 тысяч
+// вызовов вместо 69 тысяч передач, которые вообще попадают хоть в чьё-то окно
+// (весь фид — 306 тысяч, но большая его часть не лежит рядом ни с одним
+// свистком и трогать её незачем).
+//
+// `cyr` считается по СЫРОМУ заголовку: к моменту токенизации всё уже
+// латиница, а нечёткая ветка teamInTitle() зависит именно от исходного
+// алфавита — на этом легко ошибиться.
+const titleTokens = (p) => (p.tok ??= new Set(tokens(p.title)));
+const titleIsCyrillic = (p) => (p.cyr ??= CYRILLIC.test(p.title));
+
+/** Индекс первой передачи, начинающейся не раньше `ms`. Список отсортирован
+ * по началу, так что окно вокруг свистка — это срез, а не проход с головы:
+ * раньше каждый матч прокручивал весь список целиком (306 тысяч передач на
+ * каждый из полутора сотен матчей), чтобы дойти до своих трёх часов. */
+function firstAtOrAfter(list, ms) {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid].start < ms) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 // Clubs whose real Russian broadcast name doesn't derive from transliterating
 // the FotMob (English/local) name at all — a translated exonym ("Bayern
 // München" is called "Бавария", the region name, not a rendering of
@@ -328,13 +400,13 @@ function findBroadcastChannels(progList, home, away, kickoffMs, homeAlt, awayAlt
   const hi = kickoffMs + WINDOW_MS;
   const channelIds = new Set();
 
-  for (const p of progList) {
-    if (p.start < lo) continue;
+  for (let i = firstAtOrAfter(progList, lo); i < progList.length; i++) {
+    const p = progList[i];
     if (p.start > hi) break; // sorted by start — nothing further can match
-    const titleTokens = new Set(tokens(p.title));
-    const wasCyrillic = /\p{Script=Cyrillic}/u.test(p.title);
-    const homeHit = homeForms.some((f) => teamInTitle(f.meaningful, titleTokens, f.tokens, wasCyrillic));
-    const awayHit = awayForms.some((f) => teamInTitle(f.meaningful, titleTokens, f.tokens, wasCyrillic));
+    const tt = titleTokens(p);
+    const wasCyrillic = titleIsCyrillic(p);
+    const homeHit = homeForms.some((f) => teamInTitle(f.meaningful, tt, f.tokens, wasCyrillic));
+    const awayHit = awayForms.some((f) => teamInTitle(f.meaningful, tt, f.tokens, wasCyrillic));
     if (homeHit && awayHit) {
       channelIds.add(p.channelId);
     }

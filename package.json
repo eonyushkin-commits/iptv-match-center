@@ -1,6 +1,6 @@
 {
   "name": "iptv-match-center",
-  "version": "1.3.3",
+  "version": "1.4.0",
   "private": true,
   "description": "IPTV sport guide: FotMob fixtures + EPG channel matching + VLC playback",
   "license": "MIT",
@@ -10,7 +10,8 @@
     "start": "electron .",
     "dist": "electron-builder --win",
     "dist:portable": "electron-builder --win portable",
-    "epg": "node scripts/epg-probe.js"
+    "epg": "node scripts/epg-probe.js",
+    "test": "node --test \"test/*.test.js\""
   },
   "devDependencies": {
     "electron": "^31.0.0",

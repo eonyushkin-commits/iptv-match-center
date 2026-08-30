@@ -6,18 +6,9 @@
 // ever breaks, fixtures just stop refreshing, nothing else in the app is
 // affected. Chosen over ESPN because it actually has the domestic cups ESPN
 // doesn't (Belgium, Portugal, Russia, Turkey) — verified live per
-// competition before adding, same as always. Must run through Electron's
-// `net` (Chromium's stack) — plain Node fetch gets blocked the same way
-// Sofascore/TheSportsDB do.
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-
-function pickFetch() {
-  try {
-    const { net } = require('electron');
-    if (net?.fetch) return net.fetch.bind(net);
-  } catch { /* not running inside Electron */ }
-  return globalThis.fetch;
-}
+// competition before adding, same as always. Запрос — через net.js
+// (стек Chromium + таймаут), см. пояснение там.
+const { fetchJson } = require('./net');
 
 // FotMob league ids — hardcoded, not in config.json (personal single-user
 // app, a config knob nobody else will ever touch). Verified live via
@@ -144,10 +135,7 @@ function parseScore(scoreStr) {
  * the whole season, so the window is applied client-side.
  */
 async function competitionFixtures(id, name, daysBack, daysForward) {
-  const url = `https://www.fotmob.com/api/data/leagues?id=${id}`;
-  const res = await pickFetch()(url, { headers: { 'User-Agent': UA, Accept: 'application/json', Referer: 'https://www.fotmob.com/' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status} league ${id}`);
-  const json = await res.json();
+  const json = await fetchJson(`https://www.fotmob.com/api/data/leagues?id=${id}`, `league ${id}`);
   const allMatches = json.fixtures?.allMatches || json.overview?.matches?.allMatches || [];
   // FotMob's own brand colour for the competition — present for every
   // competition checked so far, down to obscure ones (Russian Second
@@ -214,10 +202,7 @@ async function competitionFixtures(id, name, daysBack, daysForward) {
  */
 async function matchStatus(matchId) {
   try {
-    const url = `https://www.fotmob.com/api/data/matchDetails?matchId=${matchId}`;
-    const res = await pickFetch()(url, { headers: { 'User-Agent': UA, Accept: 'application/json', Referer: 'https://www.fotmob.com/' } });
-    if (!res.ok) return null;
-    const json = await res.json();
+    const json = await fetchJson(`https://www.fotmob.com/api/data/matchDetails?matchId=${matchId}`, `match ${matchId}`);
     const s = json.header?.status;
     if (!s) return null;
     const [homeScore, awayScore] = parseScore(s.scoreStr);

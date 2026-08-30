@@ -32,13 +32,24 @@ async function play(event, broadcast, streamIndex = 0) {
 const TIME = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' });
 const DAY = new Intl.DateTimeFormat('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
 
+// День в ЛОКАЛЬНОЙ зоне. Здесь стоял toISOString().slice(0, 10), то есть
+// дата по UTC — при том что время на карточке рендерится через Intl, то
+// есть локальное. У матча, начинающегося в 00:30 по Москве, UTC-дата
+// вчерашняя, и ярлык выходил «Сегодня» вместо «Завтра». Задевало всё, что
+// стартует после 21:00 UTC: Бразилию, Аргентину, Либертадорес, поздний MLS.
+function localDay(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 function dateBadge(startMs) {
-  const iso = new Date(startMs).toISOString().slice(0, 10);
+  const day = localDay(new Date(startMs));
   const today = new Date();
-  const todayIso = today.toISOString().slice(0, 10);
-  const tomorrowIso = new Date(today.getTime() + 86400000).toISOString().slice(0, 10);
-  if (iso === todayIso) return 'Сегодня';
-  if (iso === tomorrowIso) return 'Завтра';
+  if (day === localDay(today)) return 'Сегодня';
+  // setDate, а не +86400000: в сутках перехода на летнее время не 24 часа.
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (day === localDay(tomorrow)) return 'Завтра';
   return DAY.format(new Date(startMs));
 }
 
@@ -48,15 +59,11 @@ function dateBadge(startMs) {
 // forever showing whatever minute it was at when we last synced.
 const MATCH_MAX_MS = 150 * 60 * 1000;
 
-function flatEvents() {
-  const out = [];
+// Уже отсортировано по времени начала — сортирует sync.js, здесь остаётся
+// только отсечь давно начавшееся.
+function visibleEvents() {
   const cutoff = Date.now() - MATCH_MAX_MS;
-  for (const day of guide.days) {
-    for (const t of day.tournaments) {
-      for (const e of t.events) if (e.start > cutoff) out.push(e);
-    }
-  }
-  return out.sort((a, b) => a.start - b.start);
+  return guide.events.filter((e) => e.start > cutoff);
 }
 
 function crest(url, alt) {
@@ -224,7 +231,7 @@ function renderList() {
   const list = el('list');
   list.replaceChildren();
 
-  const all = flatEvents();
+  const all = visibleEvents();
   const live = all.filter((e) => e.status === 'inprogress');
   const upcoming = all.filter((e) => e.status === 'notstarted');
 
@@ -289,7 +296,7 @@ function explainEmpty() {
 }
 
 function render() {
-  if (!guide || !guide.days.length) {
+  if (!guide || !guide.events.length) {
     const p = document.createElement('p');
     p.className = 'empty';
     p.textContent = explainEmpty();
@@ -376,7 +383,7 @@ const KICKOFF_NOTICE_WINDOW_MS = 90 * 1000; // >= the poll interval below, with 
 function checkFavoriteKickoffs() {
   if (!guide) return;
   const now = Date.now();
-  for (const e of flatEvents()) {
+  for (const e of visibleEvents()) {
     if (!favoriteIds.has(e.id)) continue;
     if (notifiedThisSession.has(e.id)) continue;
     if (e.start > now || now - e.start > KICKOFF_NOTICE_WINDOW_MS) continue;

@@ -14,13 +14,10 @@ const DAYS_FORWARD = 6;
 // the window the main matcher would have.
 const WINDOW_MS = 90 * 60 * 1000;
 
-function dateKey(ms) {
-  return new Date(ms).toISOString().slice(0, 10);
-}
-
 /**
  * @param onProgress (text) => void
- * @returns { generatedAt, channelCount, stats, days: [{ date, tournaments: [{ name, events: [...] }] }] }
+ * @returns { generatedAt, channelCount, stats, events: [...] } — события
+ *          отсортированы по времени начала, рендерер на это рассчитывает.
  */
 async function run(config, onProgress = () => {}) {
   const { channels, epgUrl } = await playlist.load(config.playlistPath);
@@ -70,6 +67,15 @@ async function run(config, onProgress = () => {}) {
   let extraBroadcasts = new Map();
   try {
     const byFixtureId = new Map(upcoming.map((f) => [f.id, f]));
+    // Передачи по каналу. Проверка ниже задаётся про один конкретный канал, а
+    // раньше ради этого прокручивала весь progList (306 тысяч передач) на
+    // каждую проверяемую заявку вещателя — их сотни. Списки наследуют
+    // сортировку progList по времени, которую ждёт findBroadcastChannels().
+    const progsByChannel = new Map();
+    for (const p of progList) {
+      if (!progsByChannel.has(p.channelId)) progsByChannel.set(p.channelId, []);
+      progsByChannel.get(p.channelId).push(p);
+    }
     extraBroadcasts = await broadcasters.findBroadcasters(
       upcoming, channels, onProgress,
       (fid, chId) => epgByFixture.get(fid)?.has(chId) || false,
@@ -83,7 +89,7 @@ async function run(config, onProgress = () => {}) {
         if (!f) return false;
         const lo = f.start - WINDOW_MS;
         const hi = f.start + WINDOW_MS;
-        const progs = progList.filter((p) => p.channelId === chId && p.start >= lo && p.start <= hi);
+        const progs = (progsByChannel.get(chId) || []).filter((p) => p.start >= lo && p.start <= hi);
         if (!progs.length) return false;
         const otherFixture = upcoming.some((o) => o.id !== fid
           && epg.findBroadcastChannels(progs, o.home, o.away, f.start, o.homeShort, o.awayShort).length > 0);
@@ -149,23 +155,14 @@ async function run(config, onProgress = () => {}) {
     };
   });
 
-  const events = allEvents.filter((e) => e.broadcasts.length > 0);
-
-  const dates = [...new Set(events.map((e) => dateKey(e.start)))].sort();
-  const days = dates.map((date) => {
-    const dayEvents = events.filter((e) => dateKey(e.start) === date);
-    const byTournament = new Map();
-    for (const e of dayEvents) {
-      if (!byTournament.has(e.tournament)) byTournament.set(e.tournament, []);
-      byTournament.get(e.tournament).push(e);
-    }
-    return {
-      date,
-      tournaments: [...byTournament.entries()]
-        .map(([name, evs]) => ({ name, events: evs.sort((a, b) => a.start - b.start) }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    };
-  });
+  // Плоский список, отсортированный по времени. Здесь строилось дерево
+  // «дата -> турнир -> события», но рендерер тут же расплющивал его обратно
+  // (лента идёт сплошным списком, заголовков дня и турнира в интерфейсе нет,
+  // название турнира берётся из самого события), а refreshScores() был
+  // вынужден обходить и переупаковывать все три уровня.
+  const events = allEvents
+    .filter((e) => e.broadcasts.length > 0)
+    .sort((a, b) => a.start - b.start);
 
   const guide = {
     generatedAt: Date.now(),
@@ -177,7 +174,7 @@ async function run(config, onProgress = () => {}) {
       events: events.length,
       broadcasts: broadcastCount,
     },
-    days,
+    events,
   };
   store.writeJson(path.join(store.root, 'guide.json'), guide);
   return guide;
@@ -197,14 +194,7 @@ async function run(config, onProgress = () => {}) {
  */
 async function refreshScores(guide) {
   const now = Date.now();
-  const targets = [];
-  for (const day of guide.days) {
-    for (const t of day.tournaments) {
-      for (const e of t.events) {
-        if (e.start <= now && e.status !== 'finished') targets.push(e);
-      }
-    }
-  }
+  const targets = guide.events.filter((e) => e.start <= now && e.status !== 'finished');
   if (!targets.length) return guide;
 
   await Promise.all(targets.map(async (e) => {
@@ -218,19 +208,9 @@ async function refreshScores(guide) {
 
   // Same "only live or ahead" rule as run() — a match that just finished
   // drops off here instead of waiting for the next full sync.
-  let broadcastCount = 0;
-  let eventCount = 0;
-  for (const day of guide.days) {
-    for (const t of day.tournaments) t.events = t.events.filter((e) => e.status !== 'finished');
-    day.tournaments = day.tournaments.filter((t) => t.events.length > 0);
-    for (const t of day.tournaments) {
-      eventCount += t.events.length;
-      for (const e of t.events) broadcastCount += e.broadcasts.length;
-    }
-  }
-  guide.days = guide.days.filter((d) => d.tournaments.length > 0);
-  guide.stats.events = eventCount;
-  guide.stats.broadcasts = broadcastCount;
+  guide.events = guide.events.filter((e) => e.status !== 'finished');
+  guide.stats.events = guide.events.length;
+  guide.stats.broadcasts = guide.events.reduce((n, e) => n + e.broadcasts.length, 0);
 
   store.writeJson(path.join(store.root, 'guide.json'), guide);
   return guide;

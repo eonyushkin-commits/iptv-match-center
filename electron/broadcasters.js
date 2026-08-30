@@ -1,18 +1,9 @@
 'use strict';
 const { similarity } = require('./normalize');
-
 // Same undocumented-FotMob-API pattern as fotmob.js -- no key, must go
 // through electron.net.fetch (plain fetch gets the same bot-protection
-// block Sofascore/TheSportsDB do).
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-
-function pickFetch() {
-  try {
-    const { net } = require('electron');
-    if (net?.fetch) return net.fetch.bind(net);
-  } catch { /* not running inside Electron */ }
-  return globalThis.fetch;
-}
+// block Sofascore/TheSportsDB do). Общий вызов с таймаутом — в net.js.
+const { fetchJson } = require('./net');
 
 /**
  * FotMob's own "Where to watch" data, one call per country. Found live: the
@@ -27,9 +18,7 @@ function pickFetch() {
  */
 async function fetchListings(countryCode) {
   const url = `https://www.fotmob.com/api/data/tvlistings?matchId=1&countryCode=${countryCode}`;
-  const res = await pickFetch()(url, { headers: { 'User-Agent': UA, Accept: 'application/json', Referer: 'https://www.fotmob.com/' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status} tvlistings ${countryCode}`);
-  return res.json();
+  return fetchJson(url, `tvlistings ${countryCode}`);
 }
 
 // Fetched one country at a time, sequentially, took ~47s for ~39 countries

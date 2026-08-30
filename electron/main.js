@@ -113,7 +113,16 @@ app.on('window-all-closed', () => {
 });
 app.on('before-quit', () => vlc.stop());
 
-ipcMain.handle('guide:cached', () => store.readJson(path.join(store.root, 'guide.json'), null));
+/** Сетка с диска. Кэш от версии до 1.4 хранил дерево `days -> tournaments ->
+ * events`; читать его нечем, а мигрировать незачем — полный синк идёт при
+ * каждом запуске и всё равно перезапишет файл, так что старую форму проще
+ * считать отсутствующей. */
+function cachedGuide() {
+  const guide = store.readJson(path.join(store.root, 'guide.json'), null);
+  return Array.isArray(guide?.events) ? guide : null;
+}
+
+ipcMain.handle('guide:cached', () => cachedGuide());
 
 ipcMain.handle('playlist:status', async () => {
   const p = config().playlistPath;
@@ -202,7 +211,7 @@ ipcMain.handle('guide:sync', async () => {
  * holding a separate copy in main. No-ops quietly if nothing's been synced
  * yet — there's nothing to refresh before the first full sync. */
 ipcMain.handle('guide:refreshScores', async () => {
-  const guide = store.readJson(path.join(store.root, 'guide.json'), null);
+  const guide = cachedGuide();
   if (!guide) return { ok: true, guide: null };
   try {
     return { ok: true, guide: await sync.refreshScores(guide) };
