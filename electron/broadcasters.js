@@ -186,4 +186,4 @@ async function findBroadcasters(fixtures, channels, onProgress = () => {}, epgCo
   return dropUnsound(result, fixtures, epgConfirmed, epgClaimsOther);
 }
 
-module.exports = { findBroadcasters };
+module.exports = { findBroadcasters, dropUnsound };

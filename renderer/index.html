@@ -2,8 +2,14 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
+  <!-- Ровно то, что окну нужно, и ничего сверх. Здесь стояли `media-src *`
+       (осталось от встроенного плеера hls.js — ни <video>, ни <audio> в
+       разметке давно нет), `connect-src *` (рендерер не делает ни одного
+       сетевого вызова, только IPC, а он под CSP не подпадает) и `img-src *`
+       (грузится единственный хост — гербы FotMob). `unsafe-inline` для
+       стилей нужен: app.js ставит цвет турнира через style-свойство. -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; media-src * blob: data:; connect-src * blob: data:; img-src * data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+        content="default-src 'self'; img-src https://images.fotmob.com data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>IPTV Матч-центр</title>
   <link rel="stylesheet" href="styles.css" />
 </head>

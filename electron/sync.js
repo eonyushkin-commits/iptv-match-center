@@ -31,11 +31,21 @@ async function run(config, onProgress = () => {}) {
   onProgress('Скачиваю расписание турниров…');
   const fixtures = await fotmob.fixtures(DAYS_BACK, DAYS_FORWARD, onProgress, config.disabledCompetitions);
 
-  onProgress('Скачиваю EPG…');
-  const xml = await epg.loadXmltv(url);
+  // Only what's live or ahead — past results aren't what this app is for.
+  // Считается до загрузки EPG: время начала этих матчей нужно уже разбору
+  // фида, чтобы не тащить в память передачи, в которые никто не заглянет.
+  const upcoming = fixtures.filter((f) => f.status !== 'finished');
 
-  onProgress('Разбираю передачи…');
-  const { list: progList, channelCount: scannedChannelCount } = epg.programmes(xml, channels);
+  onProgress('Скачиваю EPG…');
+  // Строку фида (на живых данных 126 МБ) намеренно не выпускаем в область
+  // видимости run(): дальше идёт ещё десяток секунд опроса вещателей, и всё
+  // это время она висела бы мёртвым грузом. После этого блока она мусор.
+  const { list: progList, channelCount: scannedChannelCount, total: totalProgrammes } =
+    await (async () => {
+      const xml = await epg.loadXmltv(url);
+      onProgress('Разбираю передачи…');
+      return epg.programmes(xml, channels, upcoming.map((f) => f.start));
+    })();
 
   // Multiple playlist entries can share one tvg-id (quality variants), so
   // every broadcast card lists all of them as stream options.
@@ -48,8 +58,6 @@ async function run(config, onProgress = () => {}) {
   for (const list of byTvgId.values()) list.sort((a, b) => b.quality - a.quality);
 
   onProgress('Сопоставляю с каналами…');
-  // Only what's live or ahead — past results aren't what this app is for.
-  const upcoming = fixtures.filter((f) => f.status !== 'finished');
 
   // EPG-title matches first: they're the trustworthy half (the title
   // literally names both teams), and the FotMob broadcaster source below
@@ -131,9 +139,13 @@ async function run(config, onProgress = () => {}) {
         channelId,
         name: streams[0]?.name || channelId,
         country: streams[0]?.country || null,
-        streams: streams.map((s) => ({
-          id: s.id, name: s.name, url: s.url, logo: s.logo, quality: s.quality,
-        })),
+        // Только то, что рендерер действительно читает. Здесь писались ещё
+        // `id`, `logo` и `quality`: первый — побайтово тот же tvg-id, что
+        // уже лежит рядом в `channelId` (проверено на живых данных, 245 из
+        // 245 совпадений), второй нигде не выводится, третий нужен лишь для
+        // сортировки строкой выше, а её результат и так закреплён порядком
+        // элементов. Вместе это 14% размера guide.json впустую.
+        streams: streams.map((s) => ({ name: s.name, url: s.url })),
       };
     });
 
@@ -173,7 +185,7 @@ async function run(config, onProgress = () => {}) {
     channelCount: channels.length,
     stats: {
       channels: scannedChannelCount,
-      programmes: progList.length,
+      programmes: totalProgrammes,
       fixtures: fixtures.length,
       events: events.length,
       broadcasts: broadcastCount,

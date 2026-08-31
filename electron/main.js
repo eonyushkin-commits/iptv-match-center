@@ -163,17 +163,26 @@ ipcMain.handle('settings:save', async (_e, { playlistPath, epgUrl, vlcPath, disa
   if (!p) return { ok: false, error: 'Укажите файл или ссылку на плейлист' };
   const vp = (vlcPath || '').trim();
   if (vp && !fs.existsSync(vp)) return { ok: false, error: `Файл не найден: ${vp}` };
+
+  // Сначала проверяем, что плейлист вообще читается, и только потом пишем
+  // конфиг. Порядок был обратный: битая ссылка затирала прежний рабочий
+  // путь — пользователь видел ошибку, но откатываться было уже некуда, а
+  // при следующем запуске приложение вставало с нерабочим источником.
+  let loaded;
+  try {
+    loaded = await playlist.load(paths.resolvePlaylist(p));
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+
   saveConfig({
     playlistPath: p,
     epgUrl: (epgUrl || '').trim() || undefined,
     vlcPath: vp || undefined,
     disabledCompetitions: Array.isArray(disabledCompetitions) && disabledCompetitions.length ? disabledCompetitions : undefined,
   });
-  try {
-    return { ok: true, count: (await channels()).length };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
+  channelsCache = loaded.channels; // уже загружено — не перечитывать следом
+  return { ok: true, count: loaded.channels.length };
 });
 
 /** Mirrors playlist:choose — a plain file picker, no side effects. The

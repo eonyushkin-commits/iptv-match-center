@@ -228,3 +228,100 @@ describe('programmes: разбор XMLTV', () => {
     assert.ok(!tokens(list[1].title).includes('34'));
   });
 });
+
+// Разбор идёт по байтам, а не по строке (чтобы не держать в памяти
+// 250-мегабайтную UTF-16 копию фида). Срезы буфера считаются в байтах, а
+// кириллица занимает по два — если границы поедут, заголовки посыплются
+// молча. Плюс `indexOf('<programme')` сам по себе не отличает `<programme>`
+// от `<programmes>`, что регулярка делала через `\b`.
+describe('programmes: побайтовый разбор', () => {
+  const channels = [{ id: 'ch1' }];
+  const src = '<tv><programme start="20260830140000 +0000" channel="ch1">'
+    + '<title>Футбол. «Зенит» – ЦСКА</title></programme></tv>';
+
+  test('Buffer и строка дают одинаковый результат', () => {
+    const fromString = programmes(src, channels).list;
+    const fromBuffer = programmes(Buffer.from(src, 'utf8'), channels).list;
+    assert.deepStrictEqual(fromBuffer, fromString);
+  });
+
+  test('кириллица в заголовке не бьётся о границы байтовых срезов', () => {
+    const { list } = programmes(Buffer.from(src, 'utf8'), channels);
+    assert.strictEqual(list[0].title, 'Футбол. «Зенит» – ЦСКА');
+  });
+
+  test('кириллица в атрибутах тоже переживает срез', () => {
+    const cyr = '<tv><programme start="20260830140000 +0000" channel="ка-нал">'
+      + '<title>Т</title></programme></tv>';
+    const { list } = programmes(cyr, [{ id: 'ка-нал' }]);
+    assert.strictEqual(list.length, 1);
+    assert.strictEqual(list[0].channelId, 'ка-нал');
+  });
+
+  test('<programmes> не принимается за <programme>', () => {
+    const decoy = '<tv><programmes count="5" channel="ch1" start="20260830140000 +0000">'
+      + '<title>Не передача</title></programmes></tv>';
+    assert.strictEqual(programmes(decoy, channels).list.length, 0);
+  });
+
+  test('оборванный тег в конце файла не роняет разбор', () => {
+    const cut = `<tv>${src.slice(4, -5)}<programme start="2026`;
+    assert.doesNotThrow(() => programmes(cut, channels));
+  });
+});
+
+// Матчер смотрит только в окна ±90 минут вокруг свистков, поэтому всё, что
+// лежит вне них, можно не тащить в память вовсе: на живом фиде это 73%
+// передач. Фильтр обязан быть точным — отрезать лишнее, но не тронуть
+// ничего, до чего матчер способен дотянуться.
+describe('programmes: отсечение по окнам матчей', () => {
+  const K = Date.UTC(2026, 7, 30, 18, 0, 0);
+  const at = (offsetMin, id) => `<programme start="${
+    new Date(K + offsetMin * 60000).toISOString().replace(/[-:T]/g, '').slice(0, 14)
+  } +0000" channel="ch1"><title>П${id}</title></programme>`;
+
+  // -400 и +400 минут — заведомо вне окна; ±89 — заведомо внутри.
+  const xml = `<tv>${at(-400, 1)}${at(-89, 2)}${at(0, 3)}${at(89, 4)}${at(400, 5)}</tv>`;
+  const channels = [{ id: 'ch1' }];
+
+  test('без списка свистков фид не фильтруется вовсе', () => {
+    const { list, total } = programmes(xml, channels);
+    assert.strictEqual(list.length, 5);
+    assert.strictEqual(total, 5);
+  });
+
+  test('со свистком остаётся только его окно', () => {
+    const { list } = programmes(xml, channels, [K]);
+    assert.deepStrictEqual(list.map((p) => p.title), ['П2', 'П3', 'П4']);
+  });
+
+  test('`total` считает весь фид, а не остаток — статистика синка не врёт', () => {
+    const { list, total } = programmes(xml, channels, [K]);
+    assert.strictEqual(total, 5);
+    assert.strictEqual(list.length, 3);
+  });
+
+  test('несколько свистков дают несколько окон', () => {
+    const { list } = programmes(xml, channels, [K, K + 400 * 60000]);
+    assert.deepStrictEqual(list.map((p) => p.title), ['П2', 'П3', 'П4', 'П5']);
+  });
+
+  test('отсечённое действительно недостижимо для матчера', () => {
+    // Полный список и урезанный обязаны дать один и тот же ответ: настоящая
+    // трансляция лежит в окне и остаётся, а всё выброшенное матчер и так не
+    // открыл бы. Заодно ловушка — тот же матч стоит и далеко за окном.
+    const title = '<title>Футбол. Барселона – Атлетик</title>';
+    const withMatch = `<tv>
+      <programme start="20260830120000 +0000" channel="ch1">${title}</programme>
+      <programme start="20260830180000 +0000" channel="ch1">${title}</programme>
+    </tv>`;
+    const full = programmes(withMatch, channels).list;
+    const cut = programmes(withMatch, channels, [K]).list;
+    assert.strictEqual(full.length, 2);
+    assert.strictEqual(cut.length, 1, 'дальняя копия не отсечена');
+
+    const find = (l) => findBroadcastChannels(l, 'Barcelona', 'Athletic Club', K, 'Barcelona', 'Athletic');
+    assert.deepStrictEqual(find(full), ['ch1']);
+    assert.deepStrictEqual(find(cut), find(full), 'фильтр изменил результат матчера');
+  });
+});

@@ -17,7 +17,7 @@ const store = require('../electron/store');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'epg-cache-'));
 store.setRoot(tmp);
 
-const { loadXmltv } = require('../electron/epg');
+const { loadXmltv, fetchWithStallTimeout } = require('../electron/epg');
 
 const XML = '<tv><programme start="20260830140000 +0000" channel="ch1"><title>Тест</title></programme></tv>';
 const TTL_MS = 6 * 3600 * 1000;
@@ -61,14 +61,14 @@ describe('loadXmltv: кэш', () => {
 
   test('первый заход качает и распаковывает фид', async () => {
     const xml = await loadXmltv(url);
-    assert.match(xml, /<programme/);
+    assert.match(xml.toString('utf8'), /<programme/);
     assert.strictEqual(hits, 1);
     assert.ok(fs.existsSync(cacheFileFor(url)), 'файл кэша не создан');
   });
 
   test('второй заход берёт из кэша, не ходит в сеть', async () => {
     const xml = await loadXmltv(url);
-    assert.match(xml, /<programme/);
+    assert.match(xml.toString('utf8'), /<programme/);
     assert.strictEqual(hits, 1, 'сходил в сеть, хотя кэш свежий');
   });
 
@@ -77,7 +77,7 @@ describe('loadXmltv: кэш', () => {
     // gunzip падает на каждом заходе — раньше это чинилось только руками.
     fs.writeFileSync(cacheFileFor(url), Buffer.from('это не gzip'));
     const xml = await loadXmltv(url);
-    assert.match(xml, /<programme/);
+    assert.match(xml.toString('utf8'), /<programme/);
     assert.strictEqual(hits, 2, 'не перекачал битый кэш');
   });
 
@@ -106,5 +106,63 @@ describe('loadXmltv: кэш', () => {
     const before = hits;
     await loadXmltv(other);
     assert.strictEqual(hits, before + 1, 'подставил кэш другого провайдера');
+  });
+});
+
+// Здесь стоял таймаут на всю закачку, и это была не защита от зависания, а
+// отсечка по скорости: фид весит десятки мегабайт, и на медленном канале
+// синк падал бы каждый раз. Эти два теста фиксируют разницу — медленной
+// закачке жить дают, молчащий сокет обрывают.
+describe('fetchWithStallTimeout: обрыв по простою, а не по общему времени', () => {
+  let slow;
+  let dead;
+  const origin = (s) => `http://127.0.0.1:${s.address().port}/feed`;
+
+  before(() => Promise.all([
+    // Отдаёт 10 кусков по 100 мс — целиком дольше таймаута простоя,
+    // но пауз между кусками нет.
+    new Promise((resolve) => {
+      slow = http.createServer(async (req, res) => {
+        res.writeHead(200);
+        for (let i = 0; i < 10; i++) {
+          res.write('x'.repeat(1024));
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        res.end();
+      });
+      slow.listen(0, '127.0.0.1', resolve);
+    }),
+    // Отдаёт заголовки и один кусок, дальше молчит навсегда.
+    new Promise((resolve) => {
+      dead = http.createServer((req, res) => {
+        res.writeHead(200);
+        res.write('x'.repeat(1024));
+        // и больше ничего — res.end() не вызывается
+      });
+      dead.listen(0, '127.0.0.1', resolve);
+    }),
+  ]));
+
+  after(() => Promise.all([
+    new Promise((r) => slow.close(r)),
+    new Promise((r) => dead.close(r)),
+  ]));
+
+  test('медленная, но живая закачка доезжает, хотя идёт дольше таймаута', async () => {
+    const t = Date.now();
+    const buf = await fetchWithStallTimeout(origin(slow), 300);
+    const ms = Date.now() - t;
+    assert.strictEqual(buf.length, 10 * 1024);
+    assert.ok(ms > 300, `закачка должна была занять дольше таймаута простоя, заняла ${ms} мс`);
+  });
+
+  test('замолчавший сервер обрывается по таймауту простоя', async () => {
+    const t = Date.now();
+    await assert.rejects(
+      () => fetchWithStallTimeout(origin(dead), 300),
+      /молчит дольше/,
+    );
+    const ms = Date.now() - t;
+    assert.ok(ms < 3000, `оборвалось за ${ms} мс — должно было примерно за таймаут простоя`);
   });
 });

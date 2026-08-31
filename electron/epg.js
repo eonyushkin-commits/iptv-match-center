@@ -44,18 +44,65 @@ function untar(buf) {
  * decompressing is always exactly one `gunzipSync` away from either XML
  * text directly or, for a tar.gz feed, a tar archive with the XML inside.
  */
+/** @returns Buffer — намеренно НЕ строка, см. programmes(). */
 function unpack(gz) {
   const decompressed = zlib.gunzipSync(gz);
   const xml = decompressed[0] === 0x3c /* '<' */ ? decompressed : untar(decompressed);
   if (!xml) throw new Error('Не удалось распаковать EPG-фид (неизвестный формат архива)');
-  return xml.toString('utf8');
+  return xml;
 }
 
-// Фид весит десятки мегабайт, так что таймаут щедрый: он здесь не про
-// «медленно», а про «повисло навсегда». Без него подвисшая закачка вешала
-// весь синк молча — с заблокированной кнопкой «Обновить» и без способа
-// отменить.
-const XMLTV_TIMEOUT_MS = 120000;
+// Обрыв по ПРОСТОЮ, а не по общему времени закачки. Здесь стоял
+// `AbortSignal.timeout(120000)` — и это была не защита от зависания, а
+// отсечка по скорости: фид весит десятки мегабайт, 120 секунд на 80-мега-
+// байтном требуют 5.3 Мбит/с, и на более медленном канале синк падал бы
+// каждый раз, никогда не доезжая. Таймер ниже сбрасывается на каждом
+// пришедшем куске, так что медленная закачка живёт сколько нужно, а
+// настоящее молчание сокета ловится за 45 секунд.
+const XMLTV_STALL_MS = 45000;
+
+/**
+ * Скачивает тело ответа, обрывая при молчании дольше `stallMs`.
+ * @returns Buffer
+ */
+async function fetchWithStallTimeout(url, stallMs = XMLTV_STALL_MS) {
+  // Свой контроллер, а не AbortSignal.timeout: тот остаётся активным на всё
+  // время чтения тела, то есть снова превращается в таймаут на всю закачку
+  // (поймано тестом — первая версия этой функции падала ровно так). Здесь
+  // таймер сторожит только соединение и заголовки и снимается, как только
+  // пошли байты; дальше за темпом следит цикл ниже.
+  const controller = new AbortController();
+  const headerTimer = setTimeout(
+    () => controller.abort(new Error(`EPG-фид не отвечает ${Math.round(stallMs / 1000)} с: ${url}`)),
+    stallMs,
+  );
+  let res;
+  try {
+    res = await fetch(url, { redirect: 'follow', signal: controller.signal });
+  } finally {
+    clearTimeout(headerTimer);
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
+
+  const reader = res.body.getReader();
+  const chunks = [];
+  try {
+    for (;;) {
+      let timer;
+      const stalled = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`EPG-фид молчит дольше ${Math.round(stallMs / 1000)} с: ${url}`)), stallMs);
+      });
+      const { done, value } = await Promise.race([reader.read(), stalled])
+        .finally(() => clearTimeout(timer));
+      if (done) break;
+      chunks.push(value);
+    }
+  } catch (err) {
+    await reader.cancel().catch(() => { /* соединение уже мертво */ });
+    throw err;
+  }
+  return Buffer.concat(chunks);
+}
 
 /** Файлы кэша разведены по URL (см. cachePath), но удалять их было некому:
  * на машине автора накопилось 170 МБ от четырёх разных провайдеров, и в
@@ -96,9 +143,7 @@ async function loadXmltv(url) {
     }
   }
 
-  const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(XMLTV_TIMEOUT_MS) });
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
-  const buf = Buffer.from(await res.arrayBuffer());
+  const buf = await fetchWithStallTimeout(url);
   const isGz = buf[0] === 0x1f && buf[1] === 0x8b;
   const gz = isGz ? buf : zlib.gzipSync(buf);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -129,6 +174,13 @@ const tag = (s, name) => {
 
 const CYRILLIC = /\p{Script=Cyrillic}/u;
 
+// Границы тега <programme> для побайтового поиска в programmes().
+const TAG_OPEN = Buffer.from('<programme');
+const TAG_CLOSE = Buffer.from('</programme>');
+const CH_GT = 0x3e; // '>'
+// Что может стоять сразу после имени тега: пробельное или сам '>'.
+const NAME_END = new Set([0x20, 0x09, 0x0a, 0x0d, CH_GT]);
+
 /** "20260820184500 +0000" -> ms since epoch. */
 function parseXmltvTime(s) {
   const m = s.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s*([+-]\d{4})?/);
@@ -151,18 +203,82 @@ function parseXmltvTime(s) {
  * whether a given programme is a match worth surfacing, so the correctness
  * cost of a narrower pre-filter was never worth it.
  */
-function programmes(xmlText, channels) {
-  const knownIds = new Set(channels.map((c) => c.id).filter(Boolean));
-  const out = [];
+/** Склеенные, отсортированные окна ±90 минут вокруг переданных свистков. */
+function kickoffWindows(kickoffs) {
+  const sorted = [...kickoffs].filter(Number.isFinite).sort((a, b) => a - b);
+  const merged = [];
+  for (const k of sorted) {
+    const lo = k - WINDOW_MS;
+    const hi = k + WINDOW_MS;
+    const last = merged[merged.length - 1];
+    if (last && lo <= last[1]) last[1] = Math.max(last[1], hi);
+    else merged.push([lo, hi]);
+  }
+  return merged;
+}
 
-  for (const m of xmlText.matchAll(/<programme\b([^>]*)>([\s\S]*?)<\/programme>/g)) {
-    const attrs = m[1];
+/** Бинарный поиск по склеенным окнам: попадает ли момент хоть в одно. */
+function inWindows(merged, ms) {
+  let lo = 0;
+  let hi = merged.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (ms < merged[mid][0]) hi = mid - 1;
+    else if (ms > merged[mid][1]) lo = mid + 1;
+    else return true;
+  }
+  return false;
+}
+
+/**
+ * @param kickoffs время начала известных матчей. Передачи вне окон ±90 минут
+ *   вокруг них не попадут в результат: матчер туда всё равно не заглянет ни
+ *   разу — и findBroadcastChannels(), и перекрёстная проверка в sync.js
+ *   работают ровно в этих границах. На живых данных это 27% фида вместо
+ *   100%: 79 тысяч передач против 291 тысячи, то есть 212 тысяч объектов,
+ *   которые раньше разбирались и держались в памяти впустую.
+ *   Пустой список (или отсутствие аргумента) означает «не фильтровать» —
+ *   так работает `scripts/epg-probe.js`, которому нужен весь фид.
+ */
+function programmes(xmlSource, channels, kickoffs = []) {
+  // Разбор идёт по БАЙТАМ, а не по строке. Фид — 126 миллионов символов, и
+  // из-за кириллицы V8 хранит его по два байта на символ: четверть гигабайта,
+  // живущая всё время разбора. По буферу же в JS-строки превращаются только
+  // мелкие куски — атрибуты открывающего тега и тело тех передач, что прошли
+  // отбор по каналу и по окну. Строку на входе тоже принимаем: так вызывают
+  // тесты и scripts/epg-probe.js.
+  const buf = Buffer.isBuffer(xmlSource) ? xmlSource : Buffer.from(xmlSource, 'utf8');
+  const knownIds = new Set(channels.map((c) => c.id).filter(Boolean));
+  const windows = kickoffs.length ? kickoffWindows(kickoffs) : null;
+  const out = [];
+  let total = 0;
+
+  let pos = 0;
+  for (;;) {
+    const open = buf.indexOf(TAG_OPEN, pos);
+    if (open === -1) break;
+    const attrEnd = buf.indexOf(CH_GT, open);
+    if (attrEnd === -1) break;
+    const bodyStart = attrEnd + 1;
+    pos = bodyStart;
+
+    // `<programmes>` и прочее, что просто начинается так же, — не наш тег.
+    // Регулярка делала это через `\b`.
+    if (!NAME_END.has(buf[open + TAG_OPEN.length])) continue;
+
+    const attrs = buf.toString('utf8', open + TAG_OPEN.length, attrEnd);
     const channelId = attr(attrs, 'channel');
     if (!knownIds.has(channelId)) continue;
 
     const start = parseXmltvTime(attr(attrs, 'start'));
     if (start == null) continue;
-    const title = tag(m[2], 'title');
+    total++;
+    if (windows && !inWindows(windows, start)) continue;
+
+    const close = buf.indexOf(TAG_CLOSE, bodyStart);
+    if (close === -1) break;
+    pos = close + TAG_CLOSE.length;
+    const title = tag(buf.toString('utf8', bodyStart, close), 'title');
     if (!title) continue;
 
     // XMLTV states the end time too. Nothing in the team search needs it —
@@ -178,7 +294,10 @@ function programmes(xmlText, channels) {
   }
 
   out.sort((a, b) => a.start - b.start);
-  return { list: out, channelCount: knownIds.size };
+  // `total` — сколько передач вообще было в фиде на известных каналах, до
+  // отсечения по окнам: статистика синка должна означать то же, что и
+  // раньше, а не «сколько мы решили оставить».
+  return { list: out, channelCount: knownIds.size, total };
 }
 
 const TEAM_THRESHOLD = 78;
@@ -458,4 +577,4 @@ function isOtherSport(title) {
   return OTHER_SPORTS.test(title);
 }
 
-module.exports = { loadXmltv, programmes, findBroadcastChannels, isOtherSport, attr, tag, WINDOW_MS };
+module.exports = { loadXmltv, programmes, findBroadcastChannels, isOtherSport, attr, tag, WINDOW_MS, fetchWithStallTimeout };

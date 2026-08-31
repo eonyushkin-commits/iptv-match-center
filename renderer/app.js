@@ -290,7 +290,7 @@ function renderBar() {
 
 function explainEmpty() {
   const s = guide?.stats;
-  if (!s) return 'Сетки пока нет. Нажмите «Обновить» — первая синхронизация занимает несколько минут.';
+  if (!s) return 'Сетки пока нет. Нажмите «Обновить» — синхронизация занимает около минуты.';
   if (!s.fixtures) return 'FotMob не вернул расписание турниров. Проверьте соединение.';
   return 'Live-матчей и ближайших игр нет.';
 }
@@ -367,7 +367,18 @@ async function doScoreRefresh() {
 
 el('sync').addEventListener('click', doFullSync);
 
-setInterval(() => { if (guide) doFullSync(); }, 60 * 60 * 1000);
+// Есть ли вообще что синхронизировать. Оба цикла ниже раньше стояли под
+// `if (guide)`, и это оставляло приложение мёртвым навсегда: если синк на
+// запуске падал (сеть моргнула, FotMob прилёг), а кэша ещё не было, `guide`
+// оставался null — значит ни один цикл больше не срабатывал, и помогал
+// только ручной клик по «Обновить». Теперь условие про плейлист, а не про
+// уже собранную сетку.
+let playlistReady = false;
+
+setInterval(() => { if (playlistReady) doFullSync(); }, 60 * 60 * 1000);
+// Пока сетки нет вообще, ждать час бессмысленно — пробуем заметно чаще.
+setInterval(() => { if (playlistReady && !guide) doFullSync(); }, 5 * 60 * 1000);
+// Счёт обновлять действительно нечему, пока нет сетки — здесь условие верное.
 setInterval(() => { if (guide) doScoreRefresh(); }, 3 * 60 * 1000);
 
 /* ---------------- favorites: kickoff notification ---------------- */
@@ -504,6 +515,9 @@ el('settingsSave').addEventListener('click', async () => {
   if (!playlistPath) { settingsError('Укажите файл или ссылку на плейлист'); return; }
   const res = await window.api.saveSettings({ playlistPath, epgUrl, vlcPath, disabledCompetitions: disabledCompetitionIds() });
   if (!res.ok) { settingsError(res.error); return; }
+  // Плейлист заведомо читается — settings:save проверяет это до записи
+  // конфига. Значит и автоматические повторы синка теперь имеют смысл.
+  playlistReady = true;
   el('settingsDialog').close();
   el('status').textContent = `Плейлист загружен: ${res.count} каналов · нажмите «Обновить»`;
 });
@@ -512,6 +526,7 @@ el('settingsSave').addEventListener('click', async () => {
   if (Notification.permission === 'default') Notification.requestPermission();
 
   const pl = await window.api.playlistStatus();
+  playlistReady = pl.exists;
   guide = await window.api.cachedGuide();
   favoriteIds = new Set(await window.api.getFavorites());
 

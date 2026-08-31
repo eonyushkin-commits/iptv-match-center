@@ -21,15 +21,29 @@ const playlist = require(path.join(ROOT, 'electron', 'playlist.js'));
 const epg = require(path.join(ROOT, 'electron', 'epg.js'));
 const { attr, tag } = epg;
 
-const plPath = path.isAbsolute(config.playlistPath || '')
+// Плейлист может быть и ссылкой — с тех пор как это появилось в
+// «Настройках», `path.isAbsolute` на "https://…" возвращает false, и путь
+// склеивался в бессмыслицу вида `C:\dev\sportcenter\https:\…`. Скрипт при
+// этом не падал, а молча терял главную часть отчёта — сверку с каналами
+// плейлиста. `playlist.load()` сам различает файл и ссылку.
+const plSource = playlist.isUrl(config.playlistPath || '')
   ? config.playlistPath
-  : path.join(ROOT, config.playlistPath || 'playlist.m3u8');
+  : path.isAbsolute(config.playlistPath || '')
+    ? config.playlistPath
+    : path.join(ROOT, config.playlistPath || 'playlist.m3u8');
 
 const FOOT = /футбол|football|soccer|чемпионат|лига|кубок|премьер|серия a|ла лига|бундеслига/i;
 
 (async () => {
-  const declared = fs.existsSync(plPath) ? playlist.parseText(fs.readFileSync(plPath, 'utf8')).epgUrl : null;
-  const url = process.argv[2] || declared || config.epgUrl;
+  // Один разбор на весь прогон, через load() — он сам различает файл и
+  // ссылку. Раньше плейлист читался дважды и только с диска.
+  let parsed = { channels: [], epgUrl: null };
+  try {
+    parsed = await playlist.load(plSource);
+  } catch (err) {
+    say(`плейлист не прочитался (${err.message}) — сверка с каналами будет пустой`);
+  }
+  const url = process.argv[2] || parsed.epgUrl || config.epgUrl;
   if (!url) {
     say('Адрес EPG не найден: ни аргументом, ни в плейлисте, ни в конфиге.');
     return finish();
@@ -39,15 +53,15 @@ const FOOT = /футбол|football|soccer|чемпионат|лига|кубо�
   say('');
   say('=== Источник ===');
   say(url);
-  const text = await epg.loadXmltv(url);
-  say(`распаковано ${(text.length / 1048576).toFixed(1)} МБ`);
+  const xmlBuf = await epg.loadXmltv(url);
+  say(`распаковано ${(xmlBuf.length / 1048576).toFixed(1)} МБ`);
+  const text = xmlBuf.toString('utf8');
 
   // --- channels ------------------------------------------------------------
   const epgIds = new Set();
   for (const m of text.matchAll(/<channel\s+id="([^"]+)"/g)) epgIds.add(m[1]);
 
-  let channels = [];
-  if (fs.existsSync(plPath)) channels = playlist.parseText(fs.readFileSync(plPath, 'utf8')).channels;
+  const channels = parsed.channels;
   const byId = new Map(channels.map((c) => [c.id, c]));
 
   say('');
