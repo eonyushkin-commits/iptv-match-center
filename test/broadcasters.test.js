@@ -11,7 +11,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-const { dropUnsound } = require('../electron/broadcasters');
+const { dropUnsound, matchingChannelIds } = require('../electron/broadcasters');
 
 const T = Date.UTC(2026, 7, 30, 18, 0, 0);
 const HOUR = 3600 * 1000;
@@ -22,6 +22,51 @@ const claims = (obj) => new Map(Object.entries(obj).map(([k, v]) => [k, new Set(
 const snapshot = (map) => Object.fromEntries([...map].map(([k, v]) => [k, [...v].sort()]));
 
 const NO = () => false;
+
+// Имя станции у FotMob («Match! Football 1») часто накрывает несколько
+// разных tvg-id плейлиста — варианты качества одного канала. Раньше здесь
+// стоял `find()`, бравший первый по порядку: выбор качества зависел от того,
+// как провайдер перечислил каналы.
+describe('matchingChannelIds: берутся ВСЕ подходящие каналы', () => {
+  const ru = [
+    { id: 'm1', name: 'Матч! Футбол 1 FHD' },
+    { id: 'm2', name: 'Матч! Футбол 1 HD' },
+    { id: 'm3', name: 'Матч! Футбол 1 HD Double' },
+    { id: 'm4', name: 'Матч! Футбол 1 SD' },
+    { id: 'x1', name: 'Матч! Футбол 2 HD' },
+    { id: 'x2', name: 'Первый канал HD' },
+  ];
+
+  test('все варианты качества, а не первый по порядку', () => {
+    assert.deepStrictEqual([...matchingChannelIds('Match! Football 1', ru)].sort(), ['m1', 'm2', 'm3', 'm4']);
+  });
+
+  test('порядок каналов в плейлисте не влияет на результат', () => {
+    const reversed = [...ru].reverse();
+    assert.deepStrictEqual(
+      [...matchingChannelIds('Match! Football 1', ru)].sort(),
+      [...matchingChannelIds('Match! Football 1', reversed)].sort(),
+    );
+  });
+
+  // Цифровой гейт в similarity(): «Футбол 1» не должен утащить «Футбол 2».
+  test('соседний канал с другим номером не попадает', () => {
+    assert.ok(!matchingChannelIds('Match! Football 1', ru).has('x1'));
+  });
+
+  test('несколько записей с одним tvg-id схлопываются в один id', () => {
+    const dup = [{ id: 'same', name: 'Sky Sports Main Event HD' }, { id: 'same', name: 'Sky Sports Main Event UHD' }];
+    assert.deepStrictEqual([...matchingChannelIds('Sky Sports Main Event', dup)], ['same']);
+  });
+
+  test('ничего не подошло — пустое множество', () => {
+    assert.strictEqual(matchingChannelIds('DAZN.com (FR)', ru).size, 0);
+  });
+
+  test('канал без tvg-id пропускается', () => {
+    assert.strictEqual(matchingChannelIds('Первый канал', [{ id: null, name: 'Первый канал HD' }]).size, 0);
+  });
+});
 
 describe('dropUnsound: правило 1 — один канал на два пересекающихся матча', () => {
   const fixtures = [

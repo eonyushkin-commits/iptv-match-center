@@ -113,6 +113,30 @@ function dropUnsound(result, fixtures, epgConfirmed, epgClaimsOther) {
 }
 
 /**
+ * Все `tvg-id` каналов этой страны, чьё имя совпадает с именем станции.
+ * ВСЕ, а не первый попавшийся: одно имя станции часто накрывает несколько
+ * разных id — как правило это варианты качества одного канала («Match!
+ * Football 1» → Матч! Футбол 1 FHD / HD / HD Double / SD), на живых данных
+ * так у 58 заявок из 321. Здесь стоял `find()`, и тогда выбор качества
+ * определялся порядком каналов в плейлисте: у текущего провайдера они
+ * перечислены по убыванию, так что случайно бралось лучшее — но логики за
+ * этим не было, и другой плейлист молча отдавал бы SD или зеркало Double.
+ * Заодно это ровно то же поведение, что у поиска по заголовкам EPG: тот
+ * всегда возвращает все каналы, на которых нашёл матч.
+ *
+ * Совпадение требуется ТОЧНОЕ по токенам (см. findBroadcasters ниже) —
+ * именно оно, а не что-либо ещё, не пускает сюда потоковые сервисы вроде
+ * «DAZN.com (FR)» и «Sky Sports+ app», которых в ответе больше трети.
+ */
+function matchingChannelIds(stationName, countryChannels) {
+  const ids = new Set();
+  for (const c of countryChannels) {
+    if (c.id && similarity(stationName, c.name) === 100) ids.add(c.id);
+  }
+  return ids;
+}
+
+/**
  * Matches FotMob's own fixture ids directly against `guide.json`'s (both
  * come from the same source, no fuzzy team-name matching needed at all --
  * that's the whole point over the EPG-title path). The only fuzzy step left
@@ -175,10 +199,10 @@ async function findBroadcasters(fixtures, channels, onProgress = () => {}, epgCo
         for (const e of entries) {
           const stationName = e.station?.name || e.station?.callSign;
           if (!stationName) continue;
-          const ch = countryChannels.find((c) => similarity(stationName, c.name) === 100);
-          if (!ch) continue;
-          if (!result.has(f.id)) result.set(f.id, new Set());
-          result.get(f.id).add(ch.id);
+          for (const id of matchingChannelIds(stationName, countryChannels)) {
+            if (!result.has(f.id)) result.set(f.id, new Set());
+            result.get(f.id).add(id);
+          }
         }
       }
     }
@@ -186,4 +210,4 @@ async function findBroadcasters(fixtures, channels, onProgress = () => {}, epgCo
   return dropUnsound(result, fixtures, epgConfirmed, epgClaimsOther);
 }
 
-module.exports = { findBroadcasters, dropUnsound };
+module.exports = { findBroadcasters, dropUnsound, matchingChannelIds };
