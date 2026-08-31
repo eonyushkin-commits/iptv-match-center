@@ -32,10 +32,37 @@ function resolvePlaylist(p) {
   return path.isAbsolute(p) ? p : path.join(dataDir, p);
 }
 
+// НЕ `cache`. Chromium держит свой дисковый HTTP-кэш ровно в
+// `userData/Cache`, а пути на Windows регистронезависимы — то есть
+// `userData/cache` и `userData/Cache` это одна и та же папка. Наши
+// guide.json, favorites.json и скачанный EPG оказывались внутри неё, рядом с
+// `Cache_Data/data_0…data_3` и `index`, и Chromium вычищал их при своей
+// уборке. Наружу это выглядело так: после перезапуска расписание «сбрасы­
+// вается» (guide.json исчез, кэш считается отсутствующим), EPG качается
+// заново каждый запуск вместо шести часов TTL, а избранное пропадает.
+// В dev-режиме баг не воспроизводился: там наши файлы лежат в папке проекта,
+// а кэш Chromium — в %APPDATA%, и они не пересекались.
+const cacheDir = path.join(dataDir, 'data');
+
+// Разовый перенос избранного из старого места. Расписание и EPG
+// восстановятся сами при первом же синке, а список избранных матчей — нет,
+// это единственное, что пользователь вводил руками.
+function migrateFavorites() {
+  const old = path.join(dataDir, 'cache', 'favorites.json');
+  const now = path.join(cacheDir, 'favorites.json');
+  try {
+    if (fs.existsSync(old) && !fs.existsSync(now)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+      fs.copyFileSync(old, now);
+    }
+  } catch { /* нечего переносить или уже недоступно — не повод падать при старте */ }
+}
+
 module.exports = {
   ROOT,
   configPath,
-  cacheDir: path.join(dataDir, 'cache'),
+  cacheDir,
   ensureConfig,
+  migrateFavorites,
   resolvePlaylist,
 };

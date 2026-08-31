@@ -1,5 +1,9 @@
 node_modules/
 cache/
+# Данные приложения переехали из cache/ в data/ (см. 1.4.4 — cache/ на
+# Windows совпадает с папкой дискового кэша Chromium). Здесь лежат
+# guide.json со ссылками на потоки, в которых зашит токен доступа.
+data/
 dist/
 epg-sample.log
 

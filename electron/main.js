@@ -100,6 +100,7 @@ autoUpdater.on('update-downloaded', (info) => {
 app.whenReady().then(() => {
   paths.ensureConfig();
   store.setRoot(paths.cacheDir);
+  paths.migrateFavorites();
   createWindow();
   checkForUpdates();
   app.on('activate', () => {
