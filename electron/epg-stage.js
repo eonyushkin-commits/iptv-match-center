@@ -25,7 +25,9 @@ const { WINDOW_MS } = epg;
  *        поэтому store.setRoot() нужно позвать и здесь
  * @param input.channels каналы плейлиста
  * @param input.fixtures предстоящие матчи
- * @param input.stationsByCountry имена станций от FotMob (см. broadcasters.collectStations)
+ * @param input.stationsByCountry имена станций от FotMob (broadcasters.collectStations)
+ *        — Map либо обещание Map: их собирает main по сети параллельно с
+ *        работой этого этапа, и нужны они только под самый конец
  * @param onProgress (text) => void
  * @returns { epgByFixture, extraBroadcasts, stats } — Map'ы, а не объекты:
  *          structured clone переносит их как есть и сохраняет тип ключа,
@@ -35,11 +37,15 @@ async function run(input, onProgress = () => {}) {
   const { epgUrl, cacheRoot, channels, fixtures, stationsByCountry } = input;
   store.setRoot(cacheRoot);
 
-  onProgress('Скачиваю EPG…');
-  const feed = await epg.loadXmltv(epgUrl);
-
-  onProgress('Разбираю передачи…');
-  const { list: progList, channelCount, total } = epg.programmes(feed, channels, fixtures.map((f) => f.start));
+  // Буфер фида (200+ МБ) намеренно не выпускаем наружу этого блока: дальше
+  // он не нужен, а держать его до конца этапа — значит держать всё это время
+  // давление на сборщик мусора.
+  const { list: progList, channelCount, total } = await (async () => {
+    onProgress('Скачиваю EPG…');
+    const feed = await epg.loadXmltv(epgUrl);
+    onProgress('Разбираю передачи…');
+    return epg.programmes(feed, channels, fixtures.map((f) => f.start));
+  })();
 
   onProgress('Сопоставляю с каналами…');
   const epgByFixture = new Map();
@@ -61,6 +67,15 @@ async function run(input, onProgress = () => {}) {
 
   // Заявки вещателей и их отсев — здесь же, рядом с разобранным фидом:
   // фильтры спрашивают у него, что реально шло на канале в это время.
+  //
+  // Имена станций нужны ТОЛЬКО начиная отсюда, поэтому ждём их здесь, а не
+  // на входе: пока main опрашивает по сети четыре десятка стран, поток уже
+  // качает и разбирает фид и сопоставляет матчи. Принимаем и готовое
+  // значение, и обещание — `await` одинаково работает с обоими, а тестам
+  // удобнее передать готовое.
+  const stations = (await stationsByCountry) || new Map();
+  onProgress('Проверяю данные о вещателях…');
+
   const byFixtureId = new Map(fixtures.map((f) => [f.id, f]));
   const progsByChannel = new Map();
   for (const p of progList) {
@@ -68,7 +83,7 @@ async function run(input, onProgress = () => {}) {
     progsByChannel.get(p.channelId).push(p);
   }
 
-  const claims = broadcasters.claimsFromStations(stationsByCountry || new Map(), channels, fixtures);
+  const claims = broadcasters.claimsFromStations(stations, channels, fixtures);
   const extraBroadcasts = broadcasters.dropUnsound(
     claims,
     fixtures,

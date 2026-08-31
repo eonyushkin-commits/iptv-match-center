@@ -110,6 +110,20 @@ describe('epg-stage: тяжёлый этап синка', () => {
     assert.deepStrictEqual([...(extraBroadcasts.get(777) || [])], ['empty']);
   });
 
+  // Главный смысл: этап не ждёт станции на входе, а забирает их под самый
+  // конец. Пока main опрашивает по сети четыре десятка стран, поток уже
+  // качает и разбирает фид.
+  test('станции можно передать обещанием, а не готовым значением', async () => {
+    const ready = new Map([['RU', new Map([['777', ['Матч ТВ']]])]]);
+    let release;
+    const later = new Promise((r) => { release = r; });
+    const finished = run(later);
+    // Разрешаем уже после того, как этап начал работу.
+    setTimeout(() => release(ready), 30);
+    const { extraBroadcasts } = await finished;
+    assert.deepStrictEqual([...(extraBroadcasts.get(777) || [])], ['match']);
+  });
+
   test('без данных о вещателях этап всё равно отрабатывает', async () => {
     const { epgByFixture, extraBroadcasts } = await stage.run({
       epgUrl, cacheRoot: tmp, channels, fixtures, stationsByCountry: undefined,

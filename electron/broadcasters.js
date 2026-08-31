@@ -1,5 +1,5 @@
 'use strict';
-const { similarity } = require('./normalize');
+const { tokens, similarityTokens } = require('./normalize');
 // Same undocumented-FotMob-API pattern as fotmob.js -- no key, must go
 // through electron.net.fetch (plain fetch gets the same bot-protection
 // block Sofascore/TheSportsDB do). Общий вызов с таймаутом — в net.js.
@@ -129,9 +129,29 @@ function dropUnsound(result, fixtures, epgConfirmed, epgClaimsOther) {
  * «DAZN.com (FR)» и «Sky Sports+ app», которых в ответе больше трети.
  */
 function matchingChannelIds(stationName, countryChannels) {
+  return matchingIds(tokens(stationName), prepareChannels(countryChannels));
+}
+
+/**
+ * Каналы страны с заранее посчитанными токенами имени.
+ *
+ * Считать их один раз на страну, а не заново на каждое имя станции, —
+ * разница принципиальная: станций в ответе FotMob около двух тысяч, каналов
+ * в стране до тысячи, и наивный вариант делал два миллиона токенизаций
+ * одной и той же тысячи имён. На живых данных это 980 мс в главном потоке
+ * и 26 секунд в рабочем (там всё то же самое, но без прогретого JIT и с
+ * куда большим давлением на сборщик мусора).
+ */
+function prepareChannels(countryChannels) {
+  return countryChannels
+    .filter((c) => c.id)
+    .map((c) => ({ id: c.id, tokens: tokens(c.name) }));
+}
+
+function matchingIds(stationTokens, prepared) {
   const ids = new Set();
-  for (const c of countryChannels) {
-    if (c.id && similarity(stationName, c.name) === 100) ids.add(c.id);
+  for (const c of prepared) {
+    if (similarityTokens(stationTokens, c.tokens) === 100) ids.add(c.id);
   }
   return ids;
 }
@@ -237,11 +257,13 @@ function claimsFromStations(stationsByCountry, channels, fixtures) {
   for (const [country, perFixture] of stationsByCountry) {
     const countryChannels = byCountry.get(country);
     if (!countryChannels) continue;
+    // Токены имён каналов — один раз на страну, а не на каждое имя станции.
+    const prepared = prepareChannels(countryChannels);
     for (const [key, names] of perFixture) {
       const fid = realId.get(key);
       if (fid === undefined) continue;
       for (const name of names) {
-        for (const id of matchingChannelIds(name, countryChannels)) {
+        for (const id of matchingIds(tokens(name), prepared)) {
           if (!claims.has(fid)) claims.set(fid, new Set());
           claims.get(fid).add(id);
         }

@@ -14,7 +14,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 const { findBroadcastChannels, programmes, isOtherSport } = require('../electron/epg');
-const { similarity, tokens } = require('../electron/normalize');
+const { similarity, similarityTokens, tokens } = require('../electron/normalize');
 
 const KICKOFF = Date.UTC(2026, 7, 30, 18, 0, 0);
 
@@ -177,6 +177,22 @@ describe('normalize: сравнение имён каналов', () => {
 
   test('русское и латинское написание сходятся к одним токенам', () => {
     assert.deepStrictEqual(tokens('Матч ТВ'), tokens('Match TV'));
+  });
+
+  // similarityTokens() существует ради сопоставления имён станций с тысячей
+  // каналов: там токены канала считаются один раз, а не заново на каждую
+  // станцию (980 → 116 мс). Инвариант, который это делает безопасным.
+  test('similarityTokens по готовым токенам даёт то же, что similarity по строкам', () => {
+    const pairs = [
+      ['Sky Sports Main Event', 'UK: Sky Sports Main Event UHD'],
+      ['Sky Sports 1', 'Sky Sports 2'],
+      ['Sky Sports UHD', 'UK: Sky Sports News HD'],
+      ['Матч ТВ', 'Матч! Футбол 1 HD'],
+      ['', 'Что угодно HD'],
+    ];
+    for (const [a, b] of pairs) {
+      assert.strictEqual(similarityTokens(tokens(a), tokens(b)), similarity(a, b), `${a} / ${b}`);
+    }
   });
 });
 

@@ -70,8 +70,21 @@ function digits(toks) {
  * into "Sky Sport 2", which plain fuzzy distance happily does.
  */
 function similarity(a, b) {
-  const ta = tokens(a);
-  const tb = tokens(b);
+  return similarityTokens(tokens(a), tokens(b));
+}
+
+/**
+ * То же самое, но по уже посчитанным токенам. Нужно там, где одну и ту же
+ * строку сравнивают с тысячами других: `similarity()` токенизирует ОБЕ
+ * стороны на каждый вызов, и сопоставление имён станций с каналами
+ * плейлиста упиралось именно в это — два миллиона токенизаций одной и той
+ * же тысячи имён каналов.
+ *
+ * Токены обязаны быть получены из `tokens()` по исходной строке. Взять их
+ * из склеенных обратно токенов нельзя: `tokens()` не идемпотентна —
+ * «спор» → `spor`, а `spor` → `sport` (турецкое), см. CANON.
+ */
+function similarityTokens(ta, tb) {
   if (!ta.length || !tb.length) return 0;
   if (digits(ta) !== digits(tb)) return 0;
 
@@ -90,4 +103,4 @@ function similarity(a, b) {
   return dice;
 }
 
-module.exports = { tokens, similarity };
+module.exports = { tokens, similarity, similarityTokens };
