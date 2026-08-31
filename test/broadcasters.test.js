@@ -10,8 +10,9 @@
 // одновременно.
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
+const { tokens } = require('../electron/normalize');
 
-const { dropUnsound, matchingChannelIds } = require('../electron/broadcasters');
+const { dropUnsound, prepareChannels, matchingIds } = require('../electron/broadcasters');
 
 const T = Date.UTC(2026, 7, 30, 18, 0, 0);
 const HOUR = 3600 * 1000;
@@ -27,7 +28,11 @@ const NO = () => false;
 // разных tvg-id плейлиста — варианты качества одного канала. Раньше здесь
 // стоял `find()`, бравший первый по порядку: выбор качества зависел от того,
 // как провайдер перечислил каналы.
-describe('matchingChannelIds: берутся ВСЕ подходящие каналы', () => {
+describe('сопоставление имени станции с каналами: берутся ВСЕ подходящие', () => {
+  // Ровно тот путь, что работает в бою: токены каналов считаются один раз
+  // на страну, имя станции сравнивается по готовым токенам.
+  const match = (name, chans) => matchingIds(tokens(name), prepareChannels(chans));
+
   const ru = [
     { id: 'm1', name: 'Матч! Футбол 1 FHD' },
     { id: 'm2', name: 'Матч! Футбол 1 HD' },
@@ -38,33 +43,33 @@ describe('matchingChannelIds: берутся ВСЕ подходящие кан�
   ];
 
   test('все варианты качества, а не первый по порядку', () => {
-    assert.deepStrictEqual([...matchingChannelIds('Match! Football 1', ru)].sort(), ['m1', 'm2', 'm3', 'm4']);
+    assert.deepStrictEqual([...match('Match! Football 1', ru)].sort(), ['m1', 'm2', 'm3', 'm4']);
   });
 
   test('порядок каналов в плейлисте не влияет на результат', () => {
     const reversed = [...ru].reverse();
     assert.deepStrictEqual(
-      [...matchingChannelIds('Match! Football 1', ru)].sort(),
-      [...matchingChannelIds('Match! Football 1', reversed)].sort(),
+      [...match('Match! Football 1', ru)].sort(),
+      [...match('Match! Football 1', reversed)].sort(),
     );
   });
 
   // Цифровой гейт в similarity(): «Футбол 1» не должен утащить «Футбол 2».
   test('соседний канал с другим номером не попадает', () => {
-    assert.ok(!matchingChannelIds('Match! Football 1', ru).has('x1'));
+    assert.ok(!match('Match! Football 1', ru).has('x1'));
   });
 
   test('несколько записей с одним tvg-id схлопываются в один id', () => {
     const dup = [{ id: 'same', name: 'Sky Sports Main Event HD' }, { id: 'same', name: 'Sky Sports Main Event UHD' }];
-    assert.deepStrictEqual([...matchingChannelIds('Sky Sports Main Event', dup)], ['same']);
+    assert.deepStrictEqual([...match('Sky Sports Main Event', dup)], ['same']);
   });
 
   test('ничего не подошло — пустое множество', () => {
-    assert.strictEqual(matchingChannelIds('DAZN.com (FR)', ru).size, 0);
+    assert.strictEqual(match('DAZN.com (FR)', ru).size, 0);
   });
 
   test('канал без tvg-id пропускается', () => {
-    assert.strictEqual(matchingChannelIds('Первый канал', [{ id: null, name: 'Первый канал HD' }]).size, 0);
+    assert.strictEqual(match('Первый канал', [{ id: null, name: 'Первый канал HD' }]).size, 0);
   });
 });
 
