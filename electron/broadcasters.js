@@ -168,16 +168,20 @@ function matchingChannelIds(stationName, countryChannels) {
  *        some *other* tracked fixture on that channel at that time?
  * @returns Map<fixtureId, Set<channelId>>
  */
-async function findBroadcasters(fixtures, channels, onProgress = () => {}, epgConfirmed = () => false, epgClaimsOther = () => false) {
+/**
+ * СЕТЕВАЯ половина. Выполняется в main-процессе — `tvlistings` идёт через
+ * `net.fetch` стека Chromium, которого в рабочем потоке нет.
+ *
+ * Возвращает только имена станций, а не сырой ответ: сырьё это ~40 стран по
+ * 300 КБ, и тащить его через границу процессов незачем — дальше нужны лишь
+ * названия вещателей по нашим матчам.
+ *
+ * @returns Map<countryCode, Map<fixtureId, string[]>>
+ */
+async function collectStations(fixtureIds, countries, onProgress = () => {}) {
+  const wanted = new Set(fixtureIds.map(String));
   const byCountry = new Map();
-  for (const c of channels) {
-    if (!c.country) continue;
-    if (!byCountry.has(c.country)) byCountry.set(c.country, []);
-    byCountry.get(c.country).push(c);
-  }
 
-  const countries = [...byCountry.keys()];
-  const result = new Map();
   for (let i = 0; i < countries.length; i += BATCH_SIZE) {
     const batch = countries.slice(i, i + BATCH_SIZE);
     onProgress(`Вещатели: ${batch.join(', ')}`);
@@ -192,22 +196,59 @@ async function findBroadcasters(fixtures, channels, onProgress = () => {}, epgCo
     for (let bi = 0; bi < batch.length; bi++) {
       const listings = listingsBatch[bi];
       if (!listings) continue;
-      const countryChannels = byCountry.get(batch[bi]);
-      for (const f of fixtures) {
-        const entries = listings[f.id];
-        if (!entries) continue;
+      const perFixture = new Map();
+      for (const [fid, entries] of Object.entries(listings)) {
+        if (!wanted.has(fid)) continue;
+        const names = [];
         for (const e of entries) {
-          const stationName = e.station?.name || e.station?.callSign;
-          if (!stationName) continue;
-          for (const id of matchingChannelIds(stationName, countryChannels)) {
-            if (!result.has(f.id)) result.set(f.id, new Set());
-            result.get(f.id).add(id);
-          }
+          const name = e.station?.name || e.station?.callSign;
+          if (name) names.push(name);
+        }
+        if (names.length) perFixture.set(fid, names);
+      }
+      if (perFixture.size) byCountry.set(batch[bi], perFixture);
+    }
+  }
+  return byCountry;
+}
+
+/**
+ * ЧИСТАЯ половина. Выполняется в рабочем потоке рядом с разобранным EPG —
+ * фильтры в `dropUnsound()` спрашивают именно у него, что шло на канале.
+ *
+ * @param stationsByCountry результат collectStations()
+ * @param channels каналы плейлиста (нужны .id, .name, .country)
+ * @param fixtures наши фикстуры — нужны, чтобы вернуть id в исходном типе
+ * @returns Map<fixtureId, Set<channelId>> — до отсева, «сырые» заявки
+ */
+function claimsFromStations(stationsByCountry, channels, fixtures) {
+  const byCountry = new Map();
+  for (const c of channels) {
+    if (!c.country) continue;
+    if (!byCountry.has(c.country)) byCountry.set(c.country, []);
+    byCountry.get(c.country).push(c);
+  }
+  // Ключи ответа FotMob — строки, а id фикстуры у нас число. Без этой
+  // таблицы ключи разъехались бы по типу и dropUnsound() ниже не нашёл бы
+  // ни одного матча по своему `startById` — молча, без единой ошибки.
+  const realId = new Map(fixtures.map((f) => [String(f.id), f.id]));
+
+  const claims = new Map();
+  for (const [country, perFixture] of stationsByCountry) {
+    const countryChannels = byCountry.get(country);
+    if (!countryChannels) continue;
+    for (const [key, names] of perFixture) {
+      const fid = realId.get(key);
+      if (fid === undefined) continue;
+      for (const name of names) {
+        for (const id of matchingChannelIds(name, countryChannels)) {
+          if (!claims.has(fid)) claims.set(fid, new Set());
+          claims.get(fid).add(id);
         }
       }
     }
   }
-  return dropUnsound(result, fixtures, epgConfirmed, epgClaimsOther);
+  return claims;
 }
 
-module.exports = { findBroadcasters, dropUnsound, matchingChannelIds };
+module.exports = { collectStations, claimsFromStations, dropUnsound, matchingChannelIds };

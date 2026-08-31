@@ -1,6 +1,6 @@
 {
   "name": "iptv-match-center",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "private": true,
   "description": "IPTV sport guide: FotMob fixtures + EPG channel matching + VLC playback",
   "license": "MIT",

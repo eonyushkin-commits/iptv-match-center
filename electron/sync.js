@@ -1,32 +1,60 @@
 'use strict';
 const path = require('path');
+const { Worker } = require('worker_threads');
 const store = require('./store');
 const fotmob = require('./fotmob');
-const epg = require('./epg');
 const broadcasters = require('./broadcasters');
 const playlist = require('./playlist');
 
 const DAYS_BACK = 1;
 const DAYS_FORWARD = 6;
 
-// То же окно ±90 минут, что epg.js ищет вокруг свистка — берётся оттуда, а
-// не объявляется заново: две копии одного числа с комментарием «держать
-// синхронно» перекладывали эту синхронизацию на человека.
-const { WINDOW_MS } = epg;
-
 // Столько запросов к FotMob одновременно в лёгком обновлении счёта — та же
 // величина, что в broadcasters.js, по той же причине.
 const SCORE_BATCH_SIZE = 8;
 
-// Не чаще этого сопоставление занимает main-процесс подряд, после чего
-// отдаёт ему управление. Порог по ВРЕМЕНИ, а не по числу матчей: стоимость
-// одного матча гуляет на порядок (от долей миллисекунды до трёхсот — зависит
-// от того, сколько передач попало в его окно), поэтому «каждые N матчей»
-// давало разброс блокировок до 810 мс при среднем в десятки.
-const YIELD_MS = 50;
-
-/** Отдать управление event loop'у, чтобы main-процесс обслужил окно. */
-const yieldToUi = () => new Promise((resolve) => setImmediate(resolve));
+/**
+ * Прогоняет тяжёлый этап в рабочем потоке и возвращает его результат.
+ *
+ * Смысл ровно один: разбор фида и сопоставление — это несколько секунд
+ * сплошной синхронной работы, а main-процесс обслуживает ввод и IPC, и пока
+ * он занят, окно не отвечает. В потоке эта работа никому не мешает, а
+ * `programmes()` и `findBroadcastChannels()` остаются чистыми и синхронными,
+ * без уступок event loop'у в сигнатурах.
+ *
+ * Бонусом память: 200-мегабайтный буфер фида и разобранные передачи живут в
+ * потоке и возвращаются ОС сразу при его завершении, а не ждут сборки мусора
+ * в главном процессе.
+ */
+function runStageInWorker(input, onProgress) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'sync-worker.js'), { workerData: input });
+    let settled = false;
+    // terminate() дожидаемся до того, как отдать результат: изолят потока
+    // держит 200-мегабайтный буфер фида и разобранные передачи, и пока он
+    // жив, эта память числится за процессом. Без ожидания синк «заканчивался»
+    // с вдвое большим потреблением, чем нужно.
+    const finish = async (fn, value) => {
+      if (settled) return;
+      settled = true;
+      try {
+        await worker.terminate();
+      } catch { /* поток уже мёртв — ровно то, чего мы и добивались */ }
+      fn(value);
+    };
+    worker.on('message', (msg) => {
+      if (msg.type === 'progress') onProgress(msg.text);
+      else if (msg.type === 'done') finish(resolve, msg.result);
+      else if (msg.type === 'error') finish(reject, new Error(msg.message));
+    });
+    worker.on('error', (err) => finish(reject, err));
+    worker.on('exit', (code) => {
+      // Штатный выход после terminate() приходит уже после settled — важен
+      // только случай, когда поток умер, ничего не сообщив.
+      finish(reject, new Error(`рабочий поток синхронизации завершился с кодом ${code}`));
+    });
+  });
+}
 
 /**
  * @param onProgress (text) => void
@@ -46,21 +74,30 @@ async function run(config, onProgress = () => {}) {
   // фида, чтобы не тащить в память передачи, в которые никто не заглянет.
   const upcoming = fixtures.filter((f) => f.status !== 'finished');
 
-  onProgress('Скачиваю EPG…');
-  // Строку фида (на живых данных 126 МБ) намеренно не выпускаем в область
-  // видимости run(): дальше идёт ещё десяток секунд опроса вещателей, и всё
-  // это время она висела бы мёртвым грузом. После этого блока она мусор.
-  const { list: progList, channelCount: scannedChannelCount, total: totalProgrammes } =
-    await (async () => {
-      const xml = await epg.loadXmltv(url);
-      onProgress('Разбираю передачи…');
-      return epg.programmes(xml, channels, upcoming.map((f) => f.start));
-    })();
+  onProgress('Спрашиваю вещателей…');
+  // Сетевая половина источника «где смотреть» — единственное, что от него
+  // остаётся в main: `tvlistings` идёт через net.fetch стека Chromium,
+  // которого в рабочем потоке нет. Отсев ложных заявок делается уже там,
+  // рядом с разобранным EPG — фильтрам нужно знать, что реально шло на
+  // канале. Поэтому сеть здесь идёт ДО разбора фида, а не после
+  // сопоставления, как было, пока всё жило в одном процессе.
+  let stationsByCountry = new Map();
+  try {
+    const countries = [...new Set(channels.map((c) => c.country).filter(Boolean))];
+    stationsByCountry = await broadcasters.collectStations(upcoming.map((f) => f.id), countries, onProgress);
+  } catch (err) {
+    // Один отвалившийся источник не должен ронять весь синк — сетка
+    // соберётся по одному лишь поиску в заголовках EPG.
+    onProgress(`Вещатели FotMob недоступны: ${err.message}`);
+  }
 
-  // Разбор фида и построение индексов ниже — тоже синхронная работа;
-  // без передышки здесь она слипается с началом сопоставления в один
-  // блок больше секунды.
-  await yieldToUi();
+  const { epgByFixture, extraBroadcasts, stats } = await runStageInWorker({
+    epgUrl: url,
+    cacheRoot: store.root,
+    channels,
+    fixtures: upcoming,
+    stationsByCountry,
+  }, onProgress);
 
   // Multiple playlist entries can share one tvg-id (quality variants), so
   // every broadcast card lists all of them as stream options.
@@ -70,91 +107,7 @@ async function run(config, onProgress = () => {}) {
     if (!byTvgId.has(ch.id)) byTvgId.set(ch.id, []);
     byTvgId.get(ch.id).push(ch);
   }
-  for (const list of byTvgId.values()) list.sort((a, b) => b.quality - a.quality);
-
-  onProgress('Сопоставляю с каналами…');
-  await yieldToUi();
-
-  // EPG-title matches first: they're the trustworthy half (the title
-  // literally names both teams), and the FotMob broadcaster source below
-  // uses them to settle its own contradictions.
-  // Цикл занимает main-процесс несколько секунд подряд (на живых данных
-  // ~2.7 с на 172 матча), и всё это время окно не отвечает: рисует его свой
-  // процесс, а ввод и IPC обслуживает main. Поэтому периодически отдаём
-  // управление event loop'у — заодно строка статуса показывает движение
-  // вместо застывшего «Сопоставляю с каналами…».
-  const epgByFixture = new Map();
-  let matchedCount = 0;
-  let lastYield = Date.now();
-  for (const f of upcoming) {
-    epgByFixture.set(f.id, new Set(epg.findBroadcastChannels(progList, f.home, f.away, f.start, f.homeShort, f.awayShort)));
-    matchedCount++;
-    if (Date.now() - lastYield >= YIELD_MS) {
-      onProgress(`Сопоставляю с каналами… ${matchedCount}/${upcoming.length}`);
-      await yieldToUi();
-      lastYield = Date.now();
-    }
-  }
-
-  // FotMob's own "where to watch" data, direct id lookup — a fast bonus on
-  // top of the EPG-title search, not a replacement for it: covers
-  // broadcasters whose own EPG never carries team names at all (Sky Sports
-  // UK's "Saturday Night Football" style branded slots). It answers at the
-  // rights-holder level rather than per-channel-per-minute, so it filters
-  // its own contradictions internally — see dropUnsound() in
-  // broadcasters.js. One country failing (or FotMob's endpoint changing
-  // shape) doesn't block the rest of the sync — same resilience as
-  // everything else FotMob-sourced here.
-  let extraBroadcasts = new Map();
-  try {
-    const byFixtureId = new Map(upcoming.map((f) => [f.id, f]));
-    // Передачи по каналу. Проверка ниже задаётся про один конкретный канал, а
-    // раньше ради этого прокручивала весь progList (306 тысяч передач) на
-    // каждую проверяемую заявку вещателя — их сотни. Списки наследуют
-    // сортировку progList по времени, которую ждёт findBroadcastChannels().
-    const progsByChannel = new Map();
-    for (const p of progList) {
-      if (!progsByChannel.has(p.channelId)) progsByChannel.set(p.channelId, []);
-      progsByChannel.get(p.channelId).push(p);
-    }
-    extraBroadcasts = await broadcasters.findBroadcasters(
-      upcoming, channels, onProgress,
-      (fid, chId) => epgByFixture.get(fid)?.has(chId) || false,
-      // Does the EPG contradict the claim — either by putting some *other*
-      // fixture on that channel then (same "names both teams" bar as the
-      // main path), or by showing a different sport entirely in the kickoff
-      // slot? Both are direct evidence the channel wasn't carrying this
-      // match, whatever FotMob's rights-level answer says.
-      (fid, chId) => {
-        const f = byFixtureId.get(fid);
-        if (!f) return false;
-        const lo = f.start - WINDOW_MS;
-        const hi = f.start + WINDOW_MS;
-        const progs = (progsByChannel.get(chId) || []).filter((p) => p.start >= lo && p.start <= hi);
-        if (!progs.length) return false;
-        const otherFixture = upcoming.some((o) => o.id !== fid
-          && epg.findBroadcastChannels(progs, o.home, o.away, f.start, o.homeShort, o.awayShort).length > 0);
-        if (otherFixture) return true;
-        // A different sport on that channel when the match kicked off, or
-        // starting while it was still on. `stop` is the real end time from
-        // the feed, so a programme that merely *precedes* kickoff is
-        // correctly ignored while one that started an hour earlier and runs
-        // straight through it is not — a Polish volleyball match doing
-        // exactly that (13:45, kickoff 14:45) slipped past an earlier
-        // version that only looked at start times. Feeds without `stop`
-        // fall back to the match length as the assumed duration.
-        return progs.some((p) => {
-          if (!epg.isOtherSport(p.title)) return false;
-          const ends = p.stop ?? (p.start + WINDOW_MS);
-          const coversKickoff = p.start <= f.start && ends > f.start;
-          const startsDuringMatch = p.start > f.start && p.start < f.start + WINDOW_MS;
-          return coversKickoff || startsDuringMatch;
-        });
-      },
-    );
-  } catch (err) {
-    onProgress(`Вещатели FotMob недоступны: ${err.message}`);
-  }
+  for (const list of byTvgId.values()) list.sort((x, y) => y.quality - x.quality);
 
   let broadcastCount = 0;
   const allEvents = upcoming.map((f, i) => {
@@ -213,8 +166,8 @@ async function run(config, onProgress = () => {}) {
     generatedAt: Date.now(),
     channelCount: channels.length,
     stats: {
-      channels: scannedChannelCount,
-      programmes: totalProgrammes,
+      channels: stats.channels,
+      programmes: stats.programmes,
       fixtures: fixtures.length,
       events: events.length,
       broadcasts: broadcastCount,
