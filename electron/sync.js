@@ -5,13 +5,10 @@ const store = require('./store');
 const fotmob = require('./fotmob');
 const broadcasters = require('./broadcasters');
 const playlist = require('./playlist');
+const { BATCH_SIZE } = require('./net');
 
 const DAYS_BACK = 1;
 const DAYS_FORWARD = 6;
-
-// Столько запросов к FotMob одновременно в лёгком обновлении счёта — та же
-// величина, что в broadcasters.js, по той же причине.
-const SCORE_BATCH_SIZE = 8;
 
 /**
  * Прогоняет тяжёлый этап в рабочем потоке и возвращает его результат.
@@ -204,11 +201,10 @@ async function refreshScores(guide) {
   if (!targets.length) return guide;
 
   // Кусками, а не все разом: обычно живых матчей единицы, но в субботний
-  // вечер их бывает и два десятка, и это тот же недокументированный хост,
-  // ради которого в broadcasters.js уже введён батчинг — держать здесь
-  // безлимитный Promise.all было непоследовательно.
-  for (let i = 0; i < targets.length; i += SCORE_BATCH_SIZE) {
-    await Promise.all(targets.slice(i, i + SCORE_BATCH_SIZE).map(async (e) => {
+  // вечер их бывает и два десятка, а хост тот же недокументированный
+  // (см. BATCH_SIZE в net.js).
+  for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+    await Promise.all(targets.slice(i, i + BATCH_SIZE).map(async (e) => {
       const fresh = await fotmob.matchStatus(e.id);
       if (!fresh) return;
       e.status = fresh.status;

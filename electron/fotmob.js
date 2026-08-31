@@ -8,7 +8,7 @@
 // doesn't (Belgium, Portugal, Russia, Turkey) — verified live per
 // competition before adding, same as always. Запрос — через net.js
 // (стек Chromium + таймаут), см. пояснение там.
-const { fetchJson } = require('./net');
+const { fetchJson, BATCH_SIZE } = require('./net');
 
 // FotMob league ids — hardcoded, not in config.json (personal single-user
 // app, a config knob nobody else will ever touch). Verified live via
@@ -235,7 +235,15 @@ async function fixtures(daysBack, daysForward, onProgress = () => {}, disabledId
   const live = all.filter((f) => f.status === 'inprogress');
   if (live.length) {
     onProgress('Уточняю минуту живых матчей…');
-    await Promise.all(live.map(async (f) => { f.clock = (await matchStatus(f.id))?.clock ?? null; }));
+    // Кусками, как и везде, где этот хост дёргается пачкой (см. BATCH_SIZE в
+    // net.js). Здесь стоял безлимитный Promise.all: живых матчей обычно
+    // единицы, но в субботний вечер бывает и пара десятков — то есть залп на
+    // два десятка одновременных запросов ровно там, где соседний код от
+    // этого специально защищён.
+    for (let i = 0; i < live.length; i += BATCH_SIZE) {
+      await Promise.all(live.slice(i, i + BATCH_SIZE)
+        .map(async (f) => { f.clock = (await matchStatus(f.id))?.clock ?? null; }));
+    }
   }
 
   return all;

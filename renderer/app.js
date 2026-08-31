@@ -295,16 +295,38 @@ function explainEmpty() {
   return 'Live-матчей и ближайших игр нет.';
 }
 
+// После синка `guide` — целиком новые объекты, а `current` держал прежние:
+// нижняя панель так и показывала счёт и имя канала на момент запуска потока,
+// пока пользователь не переключит канал руками. Перецепляем на свежие по id.
+// Матч, ушедший из сетки (закончился), оставляем как есть — VLC его всё ещё
+// играет, и убирать панель из-под идущего потока было бы неправдой.
+function rebindCurrent() {
+  if (!current || !guide) return;
+  const event = guide.events.find((e) => e.id === current.event.id);
+  const broadcast = event?.broadcasts.find((b) => b.channelId === current.broadcast.channelId);
+  if (!event || !broadcast || !broadcast.streams.length) return;
+  current = {
+    event,
+    broadcast,
+    // Набор вариантов качества у канала мог измениться вместе с плейлистом.
+    streamIndex: Math.min(current.streamIndex, broadcast.streams.length - 1),
+  };
+}
+
 function render() {
+  // Выше раннего возврата: ни подсветка активного фильтра, ни нижняя панель
+  // не зависят от того, нашлось ли что показать в ленте, а при пустой сетке
+  // первая не обновлялась вовсе, вторая — только в этой ветке.
+  renderFilters();
+  rebindCurrent();
+  renderBar();
   if (!guide || !guide.events.length) {
     const p = document.createElement('p');
     p.className = 'empty';
     p.textContent = explainEmpty();
     el('list').replaceChildren(p);
-    renderBar();
     return;
   }
-  renderFilters();
   renderList();
 }
 

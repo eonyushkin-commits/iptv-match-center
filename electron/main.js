@@ -16,6 +16,36 @@ let channelsCache = null;
 
 const GUIDE_WIDTH = 440;
 
+// Последний рубеж. По умолчанию Electron показывает необработанное исключение
+// главного процесса модальным окном «A JavaScript error occurred in the main
+// process» со стеком поверх приложения — для однопользовательского десктопа
+// это худший из возможных исходов: пугает, ничего не объясняет и не даёт
+// продолжить. Ловилось живьём на spawn() VLC по исчезнувшему пути (сам тот
+// случай закрыт в vlc.js, но класс ошибок остаётся).
+//
+// Осознанно НЕ выходим следом: канон «упавший процесс в неизвестном
+// состоянии надо перезапускать» писан для серверов, где процесс безлик и
+// поднимется сам. Здесь его падение — это исчезнувшее окно у человека,
+// который смотрит матч, а всё по-настоящему важное (сетка, избранное) уже
+// на диске и пишется атомарно.
+function reportInternal(kind, err) {
+  console.error(`${kind}:`, err);
+  // Строка статуса — единственное место, где пользователь это увидит: на
+  // Windows GUI-процесс Electron ненадёжно печатает в родительскую консоль.
+  //
+  // В try обязательно: у закрытого окна `send()` бросает «Object has been
+  // destroyed», и бросок ИЗ обработчика необработанных исключений — это уже
+  // ровно то самое окно с ошибкой, ради которого всё и затевалось.
+  try {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('sync:progress', { text: `Внутренняя ошибка: ${err?.message || err}` });
+    }
+  } catch { /* окна нет или оно уже уничтожено — остаётся только console выше */ }
+}
+
+process.on('uncaughtException', (err) => reportInternal('uncaught exception', err));
+process.on('unhandledRejection', (reason) => reportInternal('unhandled rejection', reason));
+
 function config() {
   const raw = store.readJson(paths.configPath, {});
   return { ...raw, playlistPath: paths.resolvePlaylist(raw.playlistPath) };
@@ -98,9 +128,20 @@ autoUpdater.on('update-downloaded', (info) => {
 });
 
 app.whenReady().then(() => {
-  paths.ensureConfig();
-  store.setRoot(paths.cacheDir);
-  paths.migrateFavorites();
+  // Окно должно появиться при любом исходе подготовки. Раньше падение любой
+  // из трёх строк ниже (нет места, права на %APPDATA%, шаблон конфига не
+  // попал в сборку) оставляло приложение НЕВИДИМЫМ висящим процессом:
+  // createWindow() не выполнялся, а `window-all-closed` не срабатывает,
+  // потому что окон и не создавали — закрыть его можно было только через
+  // диспетчер задач. Без окна пользователь не увидит и сообщения об ошибке,
+  // а с окном — увидит «Плейлист не выбран» и сможет открыть «Настройки».
+  try {
+    paths.ensureConfig();
+    store.setRoot(paths.cacheDir);
+    paths.migrateFavorites();
+  } catch (err) {
+    console.error('подготовка данных не удалась:', err.message);
+  }
   createWindow();
   checkForUpdates();
   app.on('activate', () => {

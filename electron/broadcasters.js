@@ -3,7 +3,7 @@ const { tokens, similarityTokens } = require('./normalize');
 // Same undocumented-FotMob-API pattern as fotmob.js -- no key, must go
 // through electron.net.fetch (plain fetch gets the same bot-protection
 // block Sofascore/TheSportsDB do). Общий вызов с таймаутом — в net.js.
-const { fetchJson } = require('./net');
+const { fetchJson, BATCH_SIZE } = require('./net');
 
 /**
  * FotMob's own "Where to watch" data, one call per country. Found live: the
@@ -21,15 +21,12 @@ async function fetchListings(countryCode) {
   return fetchJson(url, `tvlistings ${countryCode}`);
 }
 
-// Fetched one country at a time, sequentially, took ~47s for ~39 countries
-// on a live run (vs. the ~16s baseline for a full sync) -- each call is
-// only a few hundred ms, so the wait was pure round-trip latency stacking
-// up. Fetching all countries fully in parallel would fix that, but a batch
-// this size hitting the same undocumented endpoint at once risks the exact
-// rate-limit wall found earlier this project (Wikidata's unbounded
-// Promise.all silently returning 0/393) -- chunking to a modest concurrency
-// keeps the speedup without that risk.
-const BATCH_SIZE = 8;
+// Сколько стран опрашиваем разом — общая для всех обращений к этому хосту
+// величина, вместе с обоснованием живёт в net.js. Здешнее измерение, из
+// которого она и выросла: по одной стране подряд — 47 секунд на ~39 стран
+// при 16 секундах на весь остальной синк, потому что каждый запрос сам по
+// себе занимает лишь пару сотен миллисекунд, а копилась чистая задержка
+// круговых поездок.
 
 // Kickoff to final whistle, generously. Only used to decide whether two
 // claims on one channel overlap, so erring long is the safe direction.
@@ -242,9 +239,16 @@ function claimsFromStations(stationsByCountry, channels, fixtures) {
     if (!byCountry.has(c.country)) byCountry.set(c.country, []);
     byCountry.get(c.country).push(c);
   }
-  // Ключи ответа FotMob — строки, а id фикстуры у нас число. Без этой
-  // таблицы ключи разъехались бы по типу и dropUnsound() ниже не нашёл бы
-  // ни одного матча по своему `startById` — молча, без единой ошибки.
+  // Здесь было написано, что ключи ответа FotMob строковые, а id фикстуры у
+  // нас числовой, и таблица переводит одно в другое. Это неверно: проверено у
+  // источника — `m.id` в `leagues?id=` и ключи `tvlistings` оба строковые,
+  // типы совпадают, переводить нечего.
+  //
+  // Таблица всё же нужна, но по другой причине: она отбрасывает заявки на
+  // матчи, которых нет в нашем списке. Без неё такой id дошёл бы до
+  // dropUnsound(), где у него нет `start`, и вся арифметика по времени
+  // считалась бы на NaN. Заодно она страхует стык по типу, если FotMob
+  // когда-нибудь сменит его на одной из двух сторон.
   const realId = new Map(fixtures.map((f) => [String(f.id), f.id]));
 
   const claims = new Map();

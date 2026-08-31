@@ -41,8 +41,14 @@ function findWindowForPid(pid) {
     if (pidBuf[0] === pid && IsWindowVisible(hwnd)) found.push(hwnd);
     return true;
   }, koffi.pointer(EnumWindowsProc));
-  EnumWindows(cb, 0);
-  koffi.unregister(cb);
+  // unregister — в finally: пул зарегистрированных колбэков у koffi
+  // ограничен, а эта функция вызывается до сорока раз за один запуск. Бросок
+  // из EnumWindows оставлял бы слот занятым навсегда.
+  try {
+    EnumWindows(cb, 0);
+  } finally {
+    koffi.unregister(cb);
+  }
   return found[0] || null;
 }
 
@@ -97,13 +103,38 @@ function httpCommand(params) {
 }
 
 /**
+ * Запуски строго по одному, в порядке поступления.
+ *
+ * Без этого два быстрых клика по каналам поднимали ДВА процесса VLC:
+ * `current` присваивается только в самом конце `playOne()`, уже после поиска
+ * окна, а он длится до десяти секунд — всё это время второй вызов видит
+ * `current === null` и честно запускает свой экземпляр. Второй затирал
+ * `current` собой, и первый оставался осиротевшим: `stop()` знает только про
+ * `current`, обработчик `exit` у сироты сверяет `current?.child === child` и
+ * тоже молчит. Процесс переживал даже закрытие приложения. Воспроизводилось
+ * с первой попытки.
+ *
+ * Очередь, а не флаг «занято»: второй клик не теряется, а дожидается конца
+ * запуска и дальше идёт обычным путём — переключением канала в уже поднятом
+ * окне. Отказ предыдущего вызова не должен рвать очередь, отсюда `catch` на
+ * хвосте.
+ */
+let queue = Promise.resolve();
+
+function play(vlcPath, url, bounds, userAgent) {
+  const next = queue.then(() => playOne(vlcPath, url, bounds, userAgent));
+  queue = next.catch(() => {});
+  return next;
+}
+
+/**
  * Plays `url`. First call spawns VLC as its own independent window, placed
  * once beside the app at `bounds` (screen px) — after that the user owns
  * that window (move/resize/fullscreen freely). Later calls reuse the
  * running process (swap the URL over VLC's own HTTP control interface)
  * instead of recreating the window, and don't touch its position at all.
  */
-async function play(vlcPath, url, bounds, userAgent) {
+async function playOne(vlcPath, url, bounds, userAgent) {
   if (current) {
     const emptied = await httpCommand({ command: 'pl_empty' });
     const switched = emptied && await httpCommand({ command: 'in_play', input: url });
@@ -140,9 +171,34 @@ async function play(vlcPath, url, bounds, userAgent) {
   if (userAgent) args.push(`--http-user-agent=${userAgent}`);
   const child = spawn(vlcPath, args, { stdio: 'ignore' });
 
+  // Ошибка запуска приходит СОБЫТИЕМ, а не исключением. Без этого слушателя
+  // EventEmitter превращает её в необработанное исключение главного процесса,
+  // и Electron показывает пользователю окно «A JavaScript error occurred in
+  // the main process» со стеком — вместо внятного сообщения в строке статуса.
+  // Проверено живьём, окно действительно появляется.
+  //
+  // Достижимо буднично, а не только через гонку: путь к VLC хранится в
+  // конфиге, а сам VLC потом удаляют, переносят, или он лежит на отключённом
+  // сетевом диске. `existsSync` в findVlcPath() проверяет файл заранее, но
+  // между проверкой и запуском есть `await freePort()`.
+  let spawnError = null;
+  child.on('error', (err) => { spawnError = err; });
+
   let hwnd = null;
   for (let i = 0; i < 40 && !hwnd; i++) {
     await new Promise((r) => setTimeout(r, 250));
+    // Раньше цикл в любом случае отрабатывал все сорок шагов: на неверном
+    // пути пользователь десять секунд смотрел на «Запускаю VLC…», прежде чем
+    // получить ошибку. Оба признака провала видны уже на первом шаге.
+    //
+    // Текст — без слов «не удалось запустить VLC»: их добавляет рендерер,
+    // показывая ошибку, и в строке они бы удвоились.
+    if (spawnError) {
+      throw new Error(spawnError.code === 'ENOENT' ? `файл не найден: ${vlcPath}` : spawnError.message);
+    }
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error('VLC завершился сразу после запуска — проверьте путь в «Настройках»');
+    }
     hwnd = findWindowForPid(child.pid);
   }
   if (!hwnd) {
