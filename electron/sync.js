@@ -18,6 +18,16 @@ const { WINDOW_MS } = epg;
 // величина, что в broadcasters.js, по той же причине.
 const SCORE_BATCH_SIZE = 8;
 
+// Не чаще этого сопоставление занимает main-процесс подряд, после чего
+// отдаёт ему управление. Порог по ВРЕМЕНИ, а не по числу матчей: стоимость
+// одного матча гуляет на порядок (от долей миллисекунды до трёхсот — зависит
+// от того, сколько передач попало в его окно), поэтому «каждые N матчей»
+// давало разброс блокировок до 810 мс при среднем в десятки.
+const YIELD_MS = 50;
+
+/** Отдать управление event loop'у, чтобы main-процесс обслужил окно. */
+const yieldToUi = () => new Promise((resolve) => setImmediate(resolve));
+
 /**
  * @param onProgress (text) => void
  * @returns { generatedAt, channelCount, stats, events: [...] } — события
@@ -47,6 +57,11 @@ async function run(config, onProgress = () => {}) {
       return epg.programmes(xml, channels, upcoming.map((f) => f.start));
     })();
 
+  // Разбор фида и построение индексов ниже — тоже синхронная работа;
+  // без передышки здесь она слипается с началом сопоставления в один
+  // блок больше секунды.
+  await yieldToUi();
+
   // Multiple playlist entries can share one tvg-id (quality variants), so
   // every broadcast card lists all of them as stream options.
   const byTvgId = new Map();
@@ -58,13 +73,27 @@ async function run(config, onProgress = () => {}) {
   for (const list of byTvgId.values()) list.sort((a, b) => b.quality - a.quality);
 
   onProgress('Сопоставляю с каналами…');
+  await yieldToUi();
 
   // EPG-title matches first: they're the trustworthy half (the title
   // literally names both teams), and the FotMob broadcaster source below
   // uses them to settle its own contradictions.
+  // Цикл занимает main-процесс несколько секунд подряд (на живых данных
+  // ~2.7 с на 172 матча), и всё это время окно не отвечает: рисует его свой
+  // процесс, а ввод и IPC обслуживает main. Поэтому периодически отдаём
+  // управление event loop'у — заодно строка статуса показывает движение
+  // вместо застывшего «Сопоставляю с каналами…».
   const epgByFixture = new Map();
+  let matchedCount = 0;
+  let lastYield = Date.now();
   for (const f of upcoming) {
     epgByFixture.set(f.id, new Set(epg.findBroadcastChannels(progList, f.home, f.away, f.start, f.homeShort, f.awayShort)));
+    matchedCount++;
+    if (Date.now() - lastYield >= YIELD_MS) {
+      onProgress(`Сопоставляю с каналами… ${matchedCount}/${upcoming.length}`);
+      await yieldToUi();
+      lastYield = Date.now();
+    }
   }
 
   // FotMob's own "where to watch" data, direct id lookup — a fast bonus on

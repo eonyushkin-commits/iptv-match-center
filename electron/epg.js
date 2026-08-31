@@ -38,15 +38,20 @@ function untar(buf) {
 }
 
 /**
- * Downloads and gzip-caches the XMLTV feed; returns the decompressed text.
- * The cache always holds gzip bytes regardless of what was actually
- * downloaded (plain XML gets gzipped before writing) — from there,
- * decompressing is always exactly one `gunzipSync` away from either XML
- * text directly or, for a tar.gz feed, a tar archive with the XML inside.
+ * Распаковывает то, что лежит в кэше. Кэш всегда хранит gzip-байты, чем бы
+ * ни был исходный файл (голый XML пережимается перед записью), поэтому
+ * отсюда до содержимого ровно один шаг: либо это сразу XML, либо tar с ним
+ * внутри — различаются по первому байту.
+ *
+ * @returns Buffer — намеренно НЕ строка, см. programmes().
+ * Распаковка асинхронная: `gunzipSync` на 30 МБ раскрывается в 200 с лишним
+ * и занимает main-процесс на треть секунды, всё это время окно не отвечает.
+ * Асинхронный вариант уходит в пул потоков zlib и event loop не держит.
  */
-/** @returns Buffer — намеренно НЕ строка, см. programmes(). */
-function unpack(gz) {
-  const decompressed = zlib.gunzipSync(gz);
+async function unpack(gz) {
+  const decompressed = await new Promise((resolve, reject) => {
+    zlib.gunzip(gz, (err, out) => (err ? reject(err) : resolve(out)));
+  });
   const xml = decompressed[0] === 0x3c /* '<' */ ? decompressed : untar(decompressed);
   if (!xml) throw new Error('Не удалось распаковать EPG-фид (неизвестный формат архива)');
   return xml;
@@ -134,7 +139,7 @@ async function loadXmltv(url) {
 
   if (fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < XMLTV_TTL_MS) {
     try {
-      return unpack(fs.readFileSync(file));
+      return await unpack(fs.readFileSync(file));
     } catch {
       // Битый файл (оборвалась запись, кончилось место) держал бы синк
       // мёртвым все шесть часов TTL: mtime свежий, значит перекачки не будет,
