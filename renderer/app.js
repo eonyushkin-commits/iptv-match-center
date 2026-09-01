@@ -79,17 +79,16 @@ function provenanceText(b) {
 }
 
 /**
- * Три состояния надёжности, каждое со своим цветом и значком.
- *
- * Цвет — основной сигнал, он читается быстрее значка. Значок оставлен рядом
- * намеренно: цвет в одиночку не работает при дальтонизме и теряется на
- * скриншоте, а самое ненадёжное состояние вдобавок помечено пунктиром — три
- * независимых признака вместо одного.
+ * Три состояния надёжности. Различает ЦВЕТ — он читается быстрее значка, и
+ * по просьбе пользователя остался единственным признаком у двух слабых
+ * состояний: значки `·`/`?` и пунктир убраны, галка у подтверждённого
+ * оставлена. Что именно стоит за цветом, по-прежнему называет подсказка на
+ * чипе, так что сведения не потеряны — только разгружен вид.
  */
 const KIND = {
   confirmed: { cls: 'is-confirmed', mark: '✓' }, // EPG и FotMob сошлись
-  epg: { cls: 'is-epg', mark: '·' }, // только телепрограмма канала
-  fotmob: { cls: 'is-fotmob', mark: '?' }, // только права по версии FotMob
+  epg: { cls: 'is-epg', mark: '' }, // только телепрограмма канала
+  fotmob: { cls: 'is-fotmob', mark: '' }, // только права по версии FotMob
 };
 
 const kindOf = (b) => (b.sources.length > 1 ? KIND.confirmed : (b.epg ? KIND.epg : KIND.fotmob));
@@ -100,10 +99,13 @@ function chipFor(event, broadcast) {
   const kind = kindOf(broadcast);
   chip.classList.add(kind.cls);
 
-  const mark = document.createElement('span');
-  mark.className = 'mark';
-  mark.textContent = kind.mark;
-  chip.append(mark, document.createTextNode(broadcast.name));
+  if (kind.mark) {
+    const mark = document.createElement('span');
+    mark.className = 'mark';
+    mark.textContent = kind.mark;
+    chip.append(mark);
+  }
+  chip.append(document.createTextNode(broadcast.name));
 
   chip.title = provenanceText(broadcast);
   chip.addEventListener('click', (e) => { e.stopPropagation(); play(event, broadcast); });
