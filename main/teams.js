@@ -1,0 +1,104 @@
+'use strict';
+const path = require('path');
+const store = require('./store');
+
+/**
+ * Клубы, чьё русское вещательное имя не выводится транслитерацией имени от
+ * FotMob вообще: переведённый экзоним («Bayern München» по-русски «Бавария»,
+ * это название земли, а не передача звучания), кириллическая аббревиатура,
+ * которой у FotMob нет в принципе («ПСЖ»), или имя, слишком короткое либо
+ * богатое диакритикой, чтобы нечёткая ветка могла перекинуть мост.
+ *
+ * Это СЕМЕНА, а не источник правды. В предыдущем проекте такая же таблица
+ * жила константой в коде — и любая правка сопоставления требовала правки
+ * исходника и выпуска новой версии. Здесь она лишь заполняет пустой файл при
+ * первом запуске, дальше правду держит `teams.json` рядом с данными, и
+ * добавить клуб можно, не трогая код.
+ */
+const SEED = {
+  'Bayern München': ['Бавария'],
+  'Paris Saint-Germain': ['ПСЖ'],
+  '1. FC Köln': ['Кёльн'],
+  'Beşiktaş': ['Бешикташ'],
+  'FC København': ['Копенгаген'],
+  'Başakşehir': ['Башакшехир'],
+  'Raków Częstochowa': ['Ракув Ченстохова'],
+  'Huracán': ['Уракан'],
+  'Çorum FK': ['Чорум'],
+  // Транслитерация ПРОИЗНОШЕНИЯ, а не написания: «Eagles» на слух сжимает
+  // «ea» в одно долгое «и», ничего похожего на побуквенное «eagles».
+  'Go Ahead Eagles': ['Гоу Эхед Иглс'],
+  // Отдельный вид разрыва: слово, которое единственное могло бы связать имя
+  // с заголовком, отбирает СОПЕРНИК. «Ньюкасл» -> nyukasl, до «newcastle»
+  // пять правок при допуске три, так что мостом работает только «Юнайтед» —
+  // а в паре двух «юнайтедов» его вычитают у обеих сторон разом. У «Вест
+  // Хэм» своя беда: vest/hem короче порога длины 5 и до нечёткой ветки не
+  // доходят вовсе.
+  'Newcastle United': ['Ньюкасл'],
+  'West Ham United': ['Вест Хэм'],
+};
+
+const FORMAT = 1;
+const filePath = () => path.join(store.root, 'teams.json');
+const candidatesPath = () => path.join(store.root, 'teams-candidates.json');
+
+/**
+ * Алиасы: семена, поверх которых лежит файл пользователя. Файл выигрывает —
+ * в том числе может СНЯТЬ семя, задав пустой список, если оно вдруг окажется
+ * вредным.
+ */
+function load() {
+  const saved = store.readJson(filePath(), null);
+  const aliases = { ...SEED };
+  if (saved && saved.v === FORMAT && saved.aliases) {
+    for (const [name, list] of Object.entries(saved.aliases)) {
+      if (Array.isArray(list)) aliases[name] = list;
+    }
+  }
+  return aliases;
+}
+
+/** Заводит файл из семян при первом запуске, чтобы его было что открыть и
+ * править. Существующий не трогает. */
+function ensureFile() {
+  if (store.readJson(filePath(), null)) return;
+  store.writeJson(filePath(), {
+    v: FORMAT,
+    _: 'Имя команды у FotMob -> как её называют в заголовках EPG. Правьте свободно, перезапуск не нужен — файл читается на каждом синке.',
+    aliases: SEED,
+  });
+}
+
+/**
+ * Все формы имени одной стороны: полное, короткое от FotMob и всё, что есть
+ * в словаре. Вещатели сокращают («Lille – PSG», не «Lille – Paris
+ * Saint-Germain»), и поиск только по полному имени такие показы терял.
+ */
+function formsFor(aliases, name, shortName) {
+  return [...new Set([name, shortName, ...(aliases[name] || [])].filter(Boolean))];
+}
+
+/**
+ * Кандидат в словарь: нечёткая ветка сопоставления нашла соответствие,
+ * которого нет в алиасах явно. Копится в отдельный файл и НЕ применяется
+ * сама — в этом вся идея: нечёткое сравнение перестаёт быть решением в
+ * рантайме и становится поставщиком предложений, которые человек
+ * подтверждает один раз и навсегда.
+ */
+function recordCandidates(found) {
+  if (!found.size) return;
+  const prev = store.readJson(candidatesPath(), { v: FORMAT, candidates: {} });
+  const out = prev.candidates || {};
+  for (const [name, titleWords] of found) {
+    const set = new Set([...(out[name] || []), ...titleWords]);
+    out[name] = [...set].slice(0, 12);
+  }
+  store.writeJson(candidatesPath(), {
+    v: FORMAT,
+    _: 'Что нечёткое сравнение приняло за имя команды. Не применяется само: перенесите проверенное в teams.json.',
+    updatedAt: Date.now(),
+    candidates: out,
+  });
+}
+
+module.exports = { SEED, load, ensureFile, formsFor, recordCandidates, filePath, candidatesPath };

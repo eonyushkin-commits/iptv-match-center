@@ -1,0 +1,11 @@
+node_modules/
+dist/
+
+# Личное. config.json — пути к плейлисту пользователя, data/ — скачанный EPG,
+# индекс и guide.json, а в нём URL потоков С ТОКЕНОМ ДОСТУПА. В git не место
+# ни тому, ни другому; в репозитории только пустой шаблон config.example.json.
+config.json
+data/
+*.m3u
+*.m3u8
+*.log

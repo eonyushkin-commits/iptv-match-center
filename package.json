@@ -1,0 +1,13 @@
+{
+  "name": "matchcenter",
+  "version": "0.1.0",
+  "description": "Спортивная телепрограмма поверх IPTV-плейлиста",
+  "main": "main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "devDependencies": {
+    "electron": "^31.7.7"
+  }
+}

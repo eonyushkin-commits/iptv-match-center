@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <!-- Ровно то, что окну нужно, и ничего сверх: рендерер не делает ни одного
+       сетевого вызова, только IPC, а он под CSP не подпадает. Единственный
+       внешний хост — гербы FotMob. `unsafe-inline` для стилей нужен: цвет
+       турнира ставится инлайновым свойством. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src https://images.fotmob.com data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>Матч-центр</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside class="guide">
+    <header class="head">
+      <h1>Матч-центр</h1>
+      <button id="sync" class="btn">Обновить</button>
+    </header>
+
+    <div class="status" id="status" role="status">Загружаю сохранённую сетку…</div>
+
+    <nav class="filters" id="filters" aria-label="Фильтр">
+      <button class="filter" data-filter="all" aria-pressed="true">Все</button>
+      <button class="filter" data-filter="live" aria-pressed="false">Сейчас</button>
+      <button class="filter" data-filter="upcoming" aria-pressed="false">Предстоящие</button>
+    </nav>
+
+    <div class="list" id="list"></div>
+
+    <div class="diag" id="diag" hidden></div>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>
