@@ -7,7 +7,10 @@
   --dim: #8fa0b5;
   --cool: #3d8bfd;
   --live: #ff8a3d;
+  /* Три цвета надёжности трансляции — см. .chip ниже. */
   --ok: #4ec97f;
+  --epg: #58a6ff;
+  --fotmob: #a371f7;
   --accent: var(--line);
 }
 
@@ -190,14 +193,61 @@ html, body {
   white-space: nowrap;
 }
 
-/* Происхождение связи видно прямо на чипе. Подтверждённое двумя источниками
-   — единственное, что здесь вообще можно назвать проверенным; заявка одних
-   лишь правообладателей, которую телепрограмма не подтверждает, — самое
-   ненадёжное, и выглядеть она должна соответственно. */
-.chip .mark { flex: none; font-size: 10px; color: var(--dim); }
-.chip.is-confirmed { border-color: rgba(78, 201, 127, 0.5); }
+/* Происхождение связи видно прямо на чипе — цветом, значком и (у самого
+   ненадёжного) пунктиром. Три независимых признака, а не один: цвет читается
+   быстрее всего, но в одиночку не работает при дальтонизме и теряется на
+   чёрно-белом скриншоте.
+
+     зелёный  — телепрограмма канала и данные FotMob сошлись. Единственное,
+                что здесь вообще можно назвать проверенным.
+     синий    — только телепрограмма канала. Она бывает и неверна: живой
+                разбор нашёл фид, уверенно назвавший матч на каналах, где шли
+                ралли и другая игра.
+     сиреневый — только права по версии FotMob. Источник отвечает на уровне
+                правообладателя, а не «какой канал в какую минуту», и
+                телепрограмма это не подтверждает — опровергнуть было нечем. */
+.chip .mark { flex: none; font-size: 10px; }
+
+.chip.is-confirmed {
+  border-color: rgba(78, 201, 127, 0.55);
+  background: rgba(78, 201, 127, 0.12);
+}
 .chip.is-confirmed .mark { color: var(--ok); }
-.chip.is-weak { border-style: dashed; color: var(--dim); }
+
+.chip.is-epg {
+  border-color: rgba(88, 166, 255, 0.5);
+  background: rgba(88, 166, 255, 0.1);
+}
+.chip.is-epg .mark { color: var(--epg); }
+
+.chip.is-fotmob {
+  border-color: rgba(163, 113, 247, 0.45);
+  border-style: dashed;
+  background: rgba(163, 113, 247, 0.08);
+  color: var(--dim);
+}
+.chip.is-fotmob .mark { color: var(--fotmob); }
+
+/* Пояснение к цветам — иначе их приходится держать в голове. Мелко и тускло:
+   строка нужна раз, а место в узком окне занимает всегда. */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 0 12px 9px;
+  color: var(--dim);
+  font-size: 11px;
+}
+.legend span { display: inline-flex; align-items: center; gap: 4px; }
+.legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  font-style: normal;
+}
+.legend .l-confirmed { background: var(--ok); }
+.legend .l-epg { background: var(--epg); }
+.legend .l-fotmob { background: var(--fotmob); }
 
 .diag {
   padding: 7px 12px;
