@@ -295,6 +295,115 @@ setInterval(() => { if (guide) doScoreRefresh(); }, 3 * 60 * 1000);
 
 window.api.onProgress(({ text }) => { el('status').textContent = text; });
 
+/* ---------------- обновление ---------------- */
+
+// Приходит только когда новая версия уже скачана и лежит на диске: установка
+// это выход и подмена файлов, ждать больше нечего. Отдельного состояния
+// «доступно обновление» нет намеренно — тихо докачать в фоне и показать один
+// баннер тише, чем двухшаговое «нашёл… качаю…».
+window.api.onUpdateReady(({ version }) => {
+  el('updateBannerText').textContent = `Доступна версия ${version}`;
+  el('updateBanner').hidden = false;
+});
+
+el('updateInstall').addEventListener('click', () => window.api.installUpdate());
+
+/* ---------------- настройки ---------------- */
+
+function settingsError(message) {
+  const p = el('settingsError');
+  p.hidden = !message;
+  p.textContent = message || '';
+}
+
+// Группировка по `country` — это собственное название группы у FotMob, тот же
+// источник, что и у списка турниров. International первой, остальные по
+// алфавиту: тот же порядок, что в каталоге самого FotMob. Данные статические,
+// сетевой запрос ради отрисовки чек-листа не нужен.
+function renderCompetitions(competitions, disabledIds) {
+  const list = el('competitionsList');
+  list.replaceChildren();
+
+  const byCountry = new Map();
+  for (const c of competitions) {
+    if (!byCountry.has(c.country)) byCountry.set(c.country, []);
+    byCountry.get(c.country).push(c);
+  }
+  const countries = [...byCountry.keys()].sort((a, b) => {
+    if (a === 'International') return -1;
+    if (b === 'International') return 1;
+    return a.localeCompare(b);
+  });
+
+  for (const country of countries) {
+    const group = document.createElement('div');
+    group.className = 'comp-group';
+    const title = document.createElement('h3');
+    title.textContent = country;
+    group.append(title);
+    for (const c of byCountry.get(country)) {
+      const label = document.createElement('label');
+      label.className = 'comp-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = String(c.id);
+      cb.checked = !disabledIds.includes(c.id);
+      const span = document.createElement('span');
+      span.textContent = c.name;
+      label.append(cb, span);
+      group.append(label);
+    }
+    list.append(group);
+  }
+}
+
+// В конфиг пишется список ВЫКЛЮЧЕННЫХ турниров, а не включённых: тогда
+// отсутствие поля означает «ничего не выключено», то есть прежнее поведение
+// для уже существующих конфигов, без нужды перечислять все турниры явно.
+const disabledCompetitionIds = () =>
+  [...el('competitionsList').querySelectorAll('input[type="checkbox"]')]
+    .filter((cb) => !cb.checked)
+    .map((cb) => Number(cb.value));
+
+el('openSettings').addEventListener('click', async () => {
+  const s = await window.api.getSettings();
+  el('playlistInput').value = s.playlistPath;
+  el('epgInput').value = s.epgUrl;
+  el('vlcPathInput').value = s.vlcPath;
+  renderCompetitions(s.competitions, s.disabledCompetitions);
+  settingsError('');
+  el('settingsDialog').showModal();
+});
+
+el('browsePlaylist').addEventListener('click', async () => {
+  const picked = await window.api.choosePlaylist();
+  if (picked) el('playlistInput').value = picked;
+});
+
+el('browseVlcPath').addEventListener('click', async () => {
+  const picked = await window.api.chooseVlcPath();
+  if (picked) el('vlcPathInput').value = picked;
+});
+
+el('settingsCancel').addEventListener('click', () => el('settingsDialog').close());
+
+el('settingsSave').addEventListener('click', async () => {
+  const playlistPath = el('playlistInput').value.trim();
+  if (!playlistPath) { settingsError('Укажите файл или ссылку на плейлист'); return; }
+  const res = await window.api.saveSettings({
+    playlistPath,
+    epgUrl: el('epgInput').value.trim(),
+    vlcPath: el('vlcPathInput').value.trim(),
+    disabledCompetitions: disabledCompetitionIds(),
+  });
+  if (!res.ok) { settingsError(res.error); return; }
+  // Плейлист заведомо читается — settings:save проверяет это до записи
+  // конфига. Значит и автоматические повторы синка теперь имеют смысл.
+  playlistReady = true;
+  el('settingsDialog').close();
+  el('status').textContent = `Плейлист загружен: ${res.count} каналов · нажмите «Обновить»`;
+});
+
 (async () => {
   const pl = await window.api.playlistStatus();
   playlistReady = pl.exists;

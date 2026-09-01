@@ -8,17 +8,29 @@
        турнира ставится инлайновым свойством. -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; img-src https://images.fotmob.com data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
-  <title>Матч-центр</title>
+  <title>IPTV Матч-центр</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <aside class="guide">
     <header class="head">
-      <h1>Матч-центр</h1>
-      <button id="sync" class="btn">Обновить</button>
+      <div class="brand">
+        <!-- Сигнальная лампа эфира: единственное украшение в интерфейсе. -->
+        <span class="brand-mark" aria-hidden="true"></span>
+        <h1>IPTV<br />Матч-центр</h1>
+      </div>
+      <div class="head-actions">
+        <button id="openSettings" class="btn ghost">Настройки</button>
+        <button id="sync" class="btn">Обновить</button>
+      </div>
     </header>
 
     <div class="status" id="status" role="status">Загружаю сохранённую сетку…</div>
+
+    <div class="update-banner" id="updateBanner" hidden>
+      <span id="updateBannerText"></span>
+      <button id="updateInstall" class="btn ghost" type="button">Перезапустить</button>
+    </div>
 
     <nav class="filters" id="filters" aria-label="Фильтр">
       <button class="filter" data-filter="all" aria-pressed="true">Все</button>
@@ -36,6 +48,43 @@
 
     <div class="diag" id="diag" hidden></div>
   </aside>
+
+  <dialog id="settingsDialog">
+    <h2>Настройки</h2>
+
+    <label class="field">
+      <span>Плейлист — файл или ссылка</span>
+      <div class="row">
+        <input id="playlistInput" type="text" placeholder="http://… или C:\…\playlist.m3u8" />
+        <button id="browsePlaylist" class="btn ghost" type="button">Обзор…</button>
+      </div>
+    </label>
+
+    <label class="field">
+      <span>EPG — ссылка на XMLTV (необязательно)</span>
+      <input id="epgInput" type="text" placeholder="по умолчанию берётся url-tvg из плейлиста" />
+    </label>
+
+    <label class="field">
+      <span>Путь к VLC (необязательно)</span>
+      <div class="row">
+        <input id="vlcPathInput" type="text" placeholder="по умолчанию ищется в Program Files" />
+        <button id="browseVlcPath" class="btn ghost" type="button">Обзор…</button>
+      </div>
+    </label>
+
+    <div class="field">
+      <span>Турниры</span>
+      <div class="competitions" id="competitionsList"></div>
+    </div>
+
+    <p class="dialog-error" id="settingsError" hidden></p>
+
+    <div class="dialog-actions">
+      <button id="settingsCancel" class="btn ghost" type="button">Отмена</button>
+      <button id="settingsSave" class="btn" type="button">Сохранить</button>
+    </div>
+  </dialog>
 
   <script src="app.js"></script>
 </body>

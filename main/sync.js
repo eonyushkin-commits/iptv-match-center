@@ -16,6 +16,12 @@ const DAYS_FORWARD = 6;
 const STATIONS_TTL_MS = 3 * 3600 * 1000;
 
 const LINKS_FORMAT = 1;
+// Версия формата сетки. Приложение носит то же имя, что и предшественник
+// (1.4.8), а значит читает ТУ ЖЕ папку в %APPDATA% — и наткнётся на его
+// guide.json, где у трансляции нет ни `sources`, ни `epg`. Рендерер на таком
+// упал бы при первом же рисовании. Несовпадение версии считается отсутствием
+// кэша: полный синк при запуске всё равно перезапишет файл.
+const GUIDE_FORMAT = 2;
 const linksPath = () => path.join(store.root, 'links.json');
 const stationsPath = () => path.join(store.root, 'stations.json');
 const guidePath = () => path.join(store.root, 'guide.json');
@@ -213,6 +219,7 @@ async function run(config, onProgress = () => {}) {
   events.sort((a, b) => a.start - b.start);
 
   const guide = {
+    v: GUIDE_FORMAT,
     generatedAt: Date.now(),
     channelCount: channels.length,
     stats: { fixtures: fixtures.length, events: events.length, broadcasts: broadcastCount, ...stageStats },
@@ -253,4 +260,4 @@ async function refreshScores(guide) {
   return guide;
 }
 
-module.exports = { run, refreshScores, guidePath, linksPath, stationsPath };
+module.exports = { run, refreshScores, guidePath, linksPath, stationsPath, GUIDE_FORMAT };

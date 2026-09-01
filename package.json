@@ -1,16 +1,66 @@
 {
-  "name": "matchcenter",
-  "version": "0.1.0",
-  "description": "Спортивная телепрограмма поверх IPTV-плейлиста",
+  "name": "iptv-match-center",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Спортивная телепрограмма поверх IPTV-плейлиста: расписание FotMob + сопоставление с EPG + VLC",
+  "license": "MIT",
   "main": "main/main.js",
+  "type": "commonjs",
   "scripts": {
     "start": "electron .",
+    "dist": "electron-builder --win",
     "test": "node --test \"test/*.test.js\""
   },
   "devDependencies": {
-    "electron": "^31.7.7"
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "koffi": "^3.1.6"
+  },
+  "build": {
+    "appId": "local.iptv-match-center.app",
+    "productName": "IPTV Матч-центр",
+    "directories": {
+      "output": "dist"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "eonyushkin-commits",
+      "repo": "iptv-match-center"
+    },
+    "files": [
+      "main/**/*",
+      "renderer/**/*",
+      "config.example.json",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "IPTV Матч-центр",
+      "artifactName": "IPTV-Match-center-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "IPTV-Match-center-portable-${version}.exe"
+    }
   }
 }
