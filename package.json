@@ -1,6 +1,6 @@
 {
   "name": "iptv-match-center",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "private": true,
   "description": "Спортивная телепрограмма поверх IPTV-плейлиста: расписание FotMob + сопоставление с EPG + VLC",
   "license": "MIT",

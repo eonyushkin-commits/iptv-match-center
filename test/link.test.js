@@ -95,9 +95,36 @@ describe('не ловит чужое', () => {
     ['коллизия с ТРЕТЬИМ матчем по слову «West» (было: 3 канала с матчем Вест Бромвича)',
       'Newcastle United', 'West Ham United', 'Newcastle', 'West Ham',
       'Newcastle United - West Bromwich Albion'],
+    // Живое: мультфильм на Disney построил карточку QPR – Cardiff City.
+    // «Greens» сошлось с «Queens» (две замены при длине шесть — треть слова,
+    // а не шум диакритики), «Cardiff City» удовлетворилось голым «city».
+    ['мультфильм с похожим словом и голым «City» (было: два канала Disney)',
+      'Queens Park Rangers', 'Cardiff City', 'QPR', 'Cardiff',
+      'Big City Greens'],
+    ['то же слово в другом окружении',
+      'Queens Park Rangers', 'Cardiff City', 'QPR', 'Cardiff',
+      'City Greens: Big Country'],
   ];
   for (const [label, home, away, hs, as, title] of cases) {
     test(label, () => assert.ok(!finds(home, away, hs, as, title), `ложное срабатывание: ${title}`));
+  }
+});
+
+// Латинский заголовок расходится с латинским именем ровно одним способом —
+// потерянной диакритикой. Это точное соответствие после сворачивания знаков,
+// а не «похожесть»: расстояние Левенштейна здесь пропускало треть слова.
+describe('латиница: только потерянная диакритика', () => {
+  const cases = [
+    ['Málaga -> Malaga', 'Real Madrid', 'Málaga', 'Real Madrid', 'Malaga', 'Real Madrid - Malaga', true],
+    ['Beşiktaş -> Besiktas', 'Beşiktaş', 'Fenerbahçe', 'Besiktas', 'Fenerbahce', 'Besiktas - Fenerbahce', true],
+    ['1. FC Köln -> Koln', '1. FC Köln', 'Werder Bremen', 'Köln', 'Werder', 'Koln - Werder Bremen', true],
+    ['две замены не диакритики — не совпадение', 'Queens Park Rangers', 'Cardiff City', 'QPR', 'Cardiff',
+      'Big City Greens', false],
+    ['одна замена не диакритики — тоже нет', 'Rodina', 'Baltika', 'Rodina', 'Baltika',
+      'Rodino and Baltike', false],
+  ];
+  for (const [label, home, away, hs, as, title, expected] of cases) {
+    test(label, () => assert.strictEqual(finds(home, away, hs, as, title), expected));
   }
 });
 

@@ -6,6 +6,11 @@ const WINDOW_MS = 90 * 60 * 1000;
 const TEAM_THRESHOLD = 78;
 const CYRILLIC = /\p{Script=Cyrillic}/u;
 
+/** «Málaga» -> «malaga», «Beşiktaş» -> «besiktas». Разложение по Unicode и
+ * снятие комбинирующих знаков — единственное расхождение, которое бывает
+ * между латинским заголовком и латинским же именем команды. */
+const foldDiacritics = (s) => s.normalize('NFD').replace(/\p{M}/gu, '');
+
 /** Классическое редакционное расстояние — строки короткие, сложнее не нужно. */
 function levenshtein(a, b) {
   const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
@@ -67,25 +72,45 @@ function teamInTitle(meaningfulTokens, titleTokenSet, fullTokens, titleWasCyrill
   // большего обнуляло всю РПЛ целиком.
   for (const t of meaningfulTokens) if (titleTokenSet.has(t)) return { exact: true, via: t };
 
-  // Нечёткая ветка существует ТОЛЬКО ради шума транслитерации:
-  // «Барселона» -> barselona против настоящего Barcelona, «Ювентус» ->
-  // yuventus против Juventus. Допуск плавающий (~1 правка на 3 символа):
-  // плоский «<= 2» слишком широк для коротких слов — «Lille» (5) и
-  // посторонний «Silent Hill» тоже в двух правках, и это ловилось живьём.
+  // Заголовок НА ЛАТИНИЦЕ: расхождение бывает ровно одного рода — потерянная
+  // диакритика («Malaga» за «Málaga», «Besiktas» за «Beşiktaş», «Koln» за
+  // «Köln»). Поэтому сравниваем не по расстоянию, а точно, свернув диакритику.
   //
-  // Для заголовка, уже написанного латиницей, ветка сужена до слов ТОЙ ЖЕ
-  // длины: там расхождение бывает максимум в диакритике («Malaga» за
-  // «Málaga»), а это замена символа, длину не меняющая. Вставки и удаления в
-  // латинском заголовке означают другое слово — на расстоянии 2 неродственные
-  // слова сходятся охотно: «Malika: la reina leona» удовлетворяла ОБЕ
-  // стороны пары Родина–Балтика разом.
-  for (const t of meaningfulTokens) {
-    if (t.length < 5) continue;
-    const maxDist = Math.floor(t.length / 3);
-    for (const titleToken of titleTokenSet) {
-      if (Math.abs(titleToken.length - t.length) > 2) continue;
-      if (!titleWasCyrillic && titleToken.length !== t.length) continue;
-      if (levenshtein(t, titleToken) <= maxDist) return { exact: false, via: titleToken };
+  // Здесь стоял Левенштейн, суженный до слов ТОЙ ЖЕ длины и допуска
+  // floor(длина/3). Сужения не хватило: у шестибуквенного слова допуск равен
+  // двум, а две замены из шести — это треть слова, а не шум. Живое ложное
+  // срабатывание: мультфильм «Big City Greens» на Disney построил карточку
+  // QPR – Cardiff City. «Greens» сошлось с «Queens» (две замены при длине 6),
+  // а «Cardiff City» удовлетворилось голым «city» из того же заголовка.
+  // Сворачивание диакритики отсекает queens/greens и сохраняет все три
+  // настоящих случая — проверено на них поимённо.
+  if (!titleWasCyrillic) {
+    // Порога длины здесь нет намеренно, в отличие от ветки ниже. Он нужен
+    // Левенштейну: у короткого слова любая допустимая правка съедает слишком
+    // большую его долю. Точному сравнению он только мешал — «Köln» это
+    // четыре буквы, и порог 5 отсекал совершенно законное «Koln» в
+    // заголовке. Совпасть после сворачивания диакритики два несвязанных
+    // слова не могут: свёртка меняет только надстрочные знаки.
+    for (const t of meaningfulTokens) {
+      for (const titleToken of titleTokenSet) {
+        if (titleToken.length !== t.length) continue;
+        if (foldDiacritics(titleToken) === foldDiacritics(t)) return { exact: false, via: titleToken };
+      }
+    }
+  } else {
+    // Заголовок НА КИРИЛЛИЦЕ: здесь шум настоящий и обильный, потому что
+    // транслитерация посимвольная, а не официальная романизация:
+    // «Барселона» -> barselona против Barcelona, «Ювентус» -> yuventus против
+    // Juventus. Допуск плавающий (~1 правка на 3 символа): плоский «<= 2»
+    // слишком широк для коротких слов — «Lille» (5) и посторонний «Silent
+    // Hill» тоже в двух правках, и это ловилось живьём.
+    for (const t of meaningfulTokens) {
+      if (t.length < 5) continue;
+      const maxDist = Math.floor(t.length / 3);
+      for (const titleToken of titleTokenSet) {
+        if (Math.abs(titleToken.length - t.length) > 2) continue;
+        if (levenshtein(t, titleToken) <= maxDist) return { exact: false, via: titleToken };
+      }
     }
   }
 
