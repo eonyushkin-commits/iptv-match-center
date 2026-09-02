@@ -27,7 +27,10 @@ const broadcasters = require('./broadcasters');
  *
  * Бонусом память: 213-мегабайтный буфер фида живёт и умирает внутри потока.
  *
- * @param input.cachedLinks { [fixtureId]: { start, epg } } — что уже посчитано
+ * @param input.cachedLinks сохранённое из links.json целиком —
+ *        { feedVersion, channelsKey, byFixture } либо null. Именно целиком, а
+ *        не одни лишь связи: годность проверяется ЗДЕСЬ, потому что только
+ *        здесь известна версия фида после возможной перекачки.
  * @returns { links, extraBroadcasts, stats }
  */
 async function run(input, onProgress = () => {}) {
@@ -55,8 +58,22 @@ async function run(input, onProgress = () => {}) {
   let matched = 0;
   let reusedLinks = 0;
 
+  // Связи годятся, только если с тех пор не сменились НИ фид, НИ набор
+  // каналов: и то и другое целиком определяет результат сопоставления.
+  //
+  // Проверка была потеряна при переносе этапа в рабочий поток, и это стоило
+  // живого сбоя: пользователь сменил источник, фид перекачался, индекс
+  // построился заново — а связи взялись готовыми от прежнего фида. Все
+  // трансляции в ленте стали «только FotMob», потому что переиспользовался
+  // мусор. Внешне это выглядело как «EPG перестал работать», хотя
+  // сопоставление было исправно и с нуля находило 51 связь против 2 в кэше.
+  const sameFeed = cachedLinks
+    && cachedLinks.feedVersion === feedVersion
+    && cachedLinks.channelsKey === channelsKey;
+  const previous = sameFeed ? (cachedLinks.byFixture || {}) : {};
+
   for (const f of fixtures) {
-    const prev = cachedLinks[String(f.id)];
+    const prev = previous[String(f.id)];
     // Годится, пока у матча не уехало время: перенесённый матч надо
     // сопоставлять заново, его окно сдвинулось.
     if (prev && prev.start === f.start) {

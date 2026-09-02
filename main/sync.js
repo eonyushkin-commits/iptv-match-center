@@ -65,15 +65,6 @@ function runStageInWorker(input, onProgress) {
   });
 }
 
-/** Связи, посчитанные раньше. Годятся, только если с тех пор не сменились ни
- * фид, ни набор каналов: и то и другое целиком определяет результат. */
-function loadLinks(feedVersion, channelsKey) {
-  const saved = store.readJson(linksPath(), null);
-  if (!saved || saved.v !== LINKS_FORMAT) return {};
-  if (saved.feedVersion !== feedVersion || saved.channelsKey !== channelsKey) return {};
-  return saved.byFixture || {};
-}
-
 /** Имена станций по странам, с TTL. */
 async function stations(fixtureIds, countries, onProgress) {
   const saved = store.readJson(stationsPath(), null);
@@ -121,9 +112,10 @@ async function run(config, onProgress = () => {}) {
     onProgress(`Вещатели недоступны: ${err.message}`);
   }
 
-  // Годность кэша связей проверяет сам этап: только он знает версию фида
-  // после возможной перекачки. Сюда передаём всё, что есть, — лишнее он
-  // отбросит сам.
+  // Сохранённое отдаём этапу ЦЕЛИКОМ, вместе с версией фида и отпечатком
+  // каналов: годность проверяет он, потому что только он знает версию после
+  // возможной перекачки. Отдать одни лишь связи, без версий, значит отдать их
+  // без срока годности — на этом уже обожглись.
   const savedLinks = store.readJson(linksPath(), null);
   const { links, feedVersion, channelsKey, extraBroadcasts, candidates, stats: stageStats } =
     await runStageInWorker({
@@ -131,7 +123,7 @@ async function run(config, onProgress = () => {}) {
       cacheRoot: store.root,
       channels,
       fixtures,
-      cachedLinks: savedLinks?.v === LINKS_FORMAT ? (savedLinks.byFixture || {}) : {},
+      cachedLinks: savedLinks?.v === LINKS_FORMAT ? savedLinks : null,
       stationsByCountry,
       aliases: teams.load(),
     }, onProgress);

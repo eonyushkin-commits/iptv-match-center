@@ -66,7 +66,7 @@ const input = (over = {}) => ({
   cacheRoot: tmp,
   channels: CHANNELS,
   fixtures: FIXTURES,
-  cachedLinks: {},
+  cachedLinks: null,
   stationsByCountry: new Map(),
   aliases: teams.SEED,
   ...over,
@@ -90,10 +90,14 @@ describe('этап целиком', () => {
     assert.strictEqual(e.stop, KICKOFF + 110 * 60000);
   });
 
+  /** Сохранённое так, как его отдаёт sync.js: связи вместе с версиями. */
+  const saved = (r, over = {}) =>
+    ({ v: 1, feedVersion: r.feedVersion, channelsKey: r.channelsKey, byFixture: r.links, ...over });
+
   // Ровно то, ради чего затевалась вся инкрементальность.
   test('повторный прогон: ни разбора, ни сопоставления', async () => {
     const first = await stage.run(input());
-    const second = await stage.run(input({ cachedLinks: first.links }));
+    const second = await stage.run(input({ cachedLinks: saved(first) }));
     assert.strictEqual(second.stats.indexReused, true, 'фид не менялся — разбирать нечего');
     assert.strictEqual(second.stats.matched, 0, 'матчи те же — сопоставлять нечего');
     assert.strictEqual(second.stats.reusedLinks, 2);
@@ -103,11 +107,47 @@ describe('этап целиком', () => {
   test('перенесённый матч пересопоставляется, остальные — нет', async () => {
     const first = await stage.run(input());
     const moved = [{ ...FIXTURES[0], start: KICKOFF + 3 * 3600000 }, FIXTURES[1]];
-    const second = await stage.run(input({ cachedLinks: first.links, fixtures: moved }));
+    const second = await stage.run(input({ cachedLinks: saved(first), fixtures: moved }));
     assert.strictEqual(second.stats.matched, 1, 'только тот, у кого уехало время');
     assert.strictEqual(second.stats.reusedLinks, 1);
     assert.deepStrictEqual(second.links.f1.epg, [], 'на новом месте передачи нет');
     assert.deepStrictEqual(second.links.f2.epg, first.links.f2.epg, 'соседа это не касается');
+  });
+
+  // Живой сбой: пользователь сменил источник, фид перекачался, индекс
+  // построился заново — а связи взялись готовыми от ПРЕЖНЕГО фида. Вся лента
+  // стала «только FotMob». Проверка версии была потеряна при переносе этапа в
+  // рабочий поток, и поймать это было нечем.
+  describe('связи от чужого фида не переиспользуются', () => {
+    test('сменилась версия фида — сопоставляем заново', async () => {
+      const first = await stage.run(input());
+      const stale = saved(first, { feedVersion: 'другой-фид', byFixture: { f1: { start: KICKOFF, epg: [] } } });
+      const second = await stage.run(input({ cachedLinks: stale }));
+      assert.strictEqual(second.stats.reusedLinks, 0, 'связи от другого фида брать нельзя');
+      assert.strictEqual(second.stats.matched, 2);
+      assert.deepStrictEqual(second.links.f1.epg.map((e) => e.channelId), ['ch1'], 'связь должна найтись заново');
+    });
+
+    test('сменился набор каналов — тоже заново', async () => {
+      const first = await stage.run(input());
+      const stale = saved(first, { channelsKey: 'другой-плейлист' });
+      const second = await stage.run(input({ cachedLinks: stale }));
+      assert.strictEqual(second.stats.reusedLinks, 0);
+      assert.strictEqual(second.stats.matched, 2);
+    });
+
+    test('чужая версия формата — как будто кэша нет', async () => {
+      const first = await stage.run(input());
+      const second = await stage.run(input({ cachedLinks: saved(first, { v: 99 }) }));
+      // sync.js такое до этапа не донесёт, но этап не должен на это полагаться.
+      assert.ok(second.links.f1.epg.length, 'связи обязаны быть, откуда бы они ни взялись');
+    });
+
+    test('кэша нет вовсе — не падаем', async () => {
+      const r = await stage.run(input({ cachedLinks: null }));
+      assert.strictEqual(r.stats.reusedLinks, 0);
+      assert.strictEqual(r.stats.matched, 2);
+    });
   });
 
   test('смена набора каналов заставляет перестроить индекс', async () => {

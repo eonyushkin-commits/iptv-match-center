@@ -9,3 +9,6 @@ data/
 *.m3u
 *.m3u8
 *.log
+
+# Локальные настройки Claude Code — про конкретную машину, не про проект.
+.claude/settings.local.json
