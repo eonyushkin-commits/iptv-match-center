@@ -22,9 +22,11 @@ function fakeChild() {
 }
 
 /** Плеер с подставленным окружением. `control` по умолчанию отвечает «да»,
- * то есть VLC поднялся и слушает. */
-function harness({ control = async () => true, onSpawn } = {}) {
+ * то есть VLC поднялся и слушает. Размещение окна тоже подставное: настоящее
+ * тянет koffi и user32, а здесь нужен лишь факт вызова с нужными границами. */
+function harness({ control = async () => true, onSpawn, findWindow = () => 'HWND' } = {}) {
   const spawned = [];
+  const placed = [];
   const player = createPlayer({
     spawn: (path, args) => {
       const child = fakeChild();
@@ -35,9 +37,17 @@ function harness({ control = async () => true, onSpawn } = {}) {
     control,
     allocPort: async () => 45000 + spawned.length,
     wait: async () => {}, // без задержек — тесты не должны ничего ждать
+    placer: {
+      find: findWindow,
+      place: (hwnd, bounds) => placed.push({ hwnd, bounds }),
+      hide: () => {},
+      show: () => {},
+    },
   });
-  return { player, spawned };
+  return { player, spawned, placed };
 }
+
+const BOUNDS = { x: 440, y: 0, width: 1480, height: 1040 };
 
 describe('запуск VLC', () => {
   test('поднимает процесс и считает себя работающим', async () => {
@@ -65,8 +75,50 @@ describe('запуск VLC', () => {
     assert.ok(!a.spawned[0].args.some((x) => x.startsWith('--http-user-agent=')));
 
     const b = harness();
-    await b.player.play('vlc.exe', 'u', 'MyAgent/1.0');
+    await b.player.play('vlc.exe', 'u', { userAgent: 'MyAgent/1.0' });
     assert.ok(b.spawned[0].args.includes('--http-user-agent=MyAgent/1.0'));
+  });
+
+  // Оба перебивают то, из-за чего окно уезжало на весь экран поверх
+  // приложения: сохранённую у пользователя настройку «запускать во весь
+  // экран» и привычку Qt подгонять окно под разрешение видео.
+  test('флаги против полноэкранного режима и авторазмера на месте', async () => {
+    const { player, spawned } = harness();
+    await player.play('vlc.exe', 'u');
+    assert.ok(spawned[0].args.includes('--no-fullscreen'));
+    assert.ok(spawned[0].args.includes('--no-qt-video-autoresize'));
+  });
+});
+
+describe('размещение окна рядом с приложением', () => {
+  test('окно ставится в переданные границы', async () => {
+    const { player, placed } = harness();
+    await player.play('vlc.exe', 'u', { bounds: BOUNDS });
+    assert.ok(placed.length >= 1, 'окно должно быть поставлено');
+    assert.deepStrictEqual(placed[0].bounds, BOUNDS);
+  });
+
+  test('без границ окно не трогается вовсе', async () => {
+    const { player, placed } = harness();
+    await player.play('vlc.exe', 'u');
+    assert.strictEqual(placed.length, 0);
+  });
+
+  // Окно после первого запуска — в распоряжении пользователя: он мог его
+  // подвинуть или развернуть, и переключение канала не повод это ломать.
+  test('переключение канала окно не переставляет', async () => {
+    const { player, placed } = harness();
+    await player.play('vlc.exe', 'a', { bounds: BOUNDS });
+    const afterFirst = placed.length;
+    await player.play('vlc.exe', 'b', { bounds: BOUNDS });
+    assert.strictEqual(placed.length, afterFirst, 'второй канал идёт в то же окно');
+  });
+
+  test('окно не нашлось — запуск всё равно удаётся', async () => {
+    const { player, placed } = harness({ findWindow: () => null });
+    await assert.doesNotReject(() => player.play('vlc.exe', 'u', { bounds: BOUNDS }));
+    assert.strictEqual(placed.length, 0);
+    assert.ok(player.isRunning(), 'поток играет, а место окна — мелочь');
   });
 });
 

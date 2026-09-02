@@ -9,5 +9,8 @@
   },
   "devDependencies": {
     "electron": "^31.7.7"
+  },
+  "dependencies": {
+    "koffi": "^3.1.6"
   }
 }

@@ -68,6 +68,15 @@ function createPlayer(deps = {}) {
   const control = deps.control || httpControl;
   const allocPort = deps.allocPort || freePort;
   const wait = deps.wait || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  // Размещение окна — тоже параметр. Реализация по умолчанию грузит koffi и
+  // user32 ЛЕНИВО (require кэшируется), поэтому тесты, подставляя свою,
+  // не трогают ни нативный код, ни Windows.
+  const placer = deps.placer || {
+    find: (pid) => require('./win32').findWindowForPid(pid),
+    place: (h, b) => require('./win32').place(h, b),
+    hide: (h) => require('./win32').hide(h),
+    show: (h) => require('./win32').showNoActivate(h),
+  };
 
   let current = null; // { child, port, password }
 
@@ -85,13 +94,19 @@ function createPlayer(deps = {}) {
    * окне.
    */
   let queue = Promise.resolve();
-  function play(vlcPath, url, userAgent) {
-    const next = queue.then(() => playOne(vlcPath, url, userAgent));
+  /**
+   * @param opts.bounds куда поставить окно VLC при первом запуске
+   *   (физические пиксели экрана). Переключение канала окна не трогает — оно
+   *   уже в распоряжении пользователя.
+   * @param opts.userAgent часть провайдеров отвергает стандартный UA VLC
+   */
+  function play(vlcPath, url, opts = {}) {
+    const next = queue.then(() => playOne(vlcPath, url, opts));
     queue = next.catch(() => {});
     return next;
   }
 
-  async function playOne(vlcPath, url, userAgent) {
+  async function playOne(vlcPath, url, { bounds, userAgent } = {}) {
     if (current) {
       const emptied = await control(current.port, current.password, { command: 'pl_empty' });
       if (emptied && await control(current.port, current.password, { command: 'in_play', input: url })) return;
@@ -109,6 +124,13 @@ function createPlayer(deps = {}) {
       '--no-qt-privacy-ask',
       '--no-qt-error-dialogs',
       '--no-play-and-exit', // именно так: VLC не принимает `=no` у булевых
+      // Qt по умолчанию подгоняет окно под родное разрешение видео в момент
+      // старта воспроизведения, затирая только что выставленный размер.
+      '--no-qt-video-autoresize',
+      // Перебивает сохранённое у пользователя в его же vlcrc «запускать на
+      // весь экран»: без этого окно прыгает в (0,0)-во-весь-монитор, как
+      // только реально пошло воспроизведение, и перекрывает приложение.
+      '--no-fullscreen',
       // HTTP-интерфейс — и пульт для переключения канала, и признак того, что
       // VLC вообще поднялся (см. ниже).
       '--extraintf=http', '--http-host=127.0.0.1', `--http-port=${port}`, `--http-password=${password}`,
@@ -147,12 +169,54 @@ function createPlayer(deps = {}) {
       }
       if (await control(port, password, { command: 'status' })) {
         current = { child, port, password };
+        if (bounds) await placeWindow(child.pid, bounds);
         return;
       }
     }
 
     try { child.kill(); } catch { /* уже мёртв */ }
     throw new Error('VLC не отозвался после запуска');
+  }
+
+  /**
+   * Ставит окно VLC туда, где ему не мешать — сбоку от окна приложения.
+   *
+   * Пробовали обойтись без этого: пусть VLC сам помнит своё положение, как
+   * любое отдельное приложение. На практике оказалось хуже — окно открывается
+   * поверх ленты матчей и её не видно, а перетаскивать его руками каждый раз
+   * неудобно. Вернули.
+   *
+   * HTTP-интерфейс отвечает раньше, чем Qt успевает нарисовать окно, поэтому
+   * его приходится ещё немного подождать. Не нашли — не беда: поток уже
+   * играет, а место окна это мелочь по сравнению с тем, чтобы уронить запуск.
+   */
+  async function placeWindow(pid, bounds) {
+    let hwnd = null;
+    for (let i = 0; i < 12 && !hwnd; i++) {
+      hwnd = placer.find(pid);
+      if (!hwnd) await wait(250);
+    }
+    if (!hwnd) return;
+
+    // Спрятать -> поставить -> показать, чтобы окно не мигнуло на своём
+    // месте по умолчанию, прежде чем прыгнуть на нужное.
+    placer.hide(hwnd);
+    placer.place(hwnd, bounds);
+    placer.show(hwnd);
+
+    // Одного раза мало: VLC переразворачивается сам вскоре ПОСЛЕ того, как
+    // реально пошла картинка, — то есть уже после создания окна. Поэтому
+    // позиция переустанавливается ещё несколько раз в первые секунды, пока
+    // не устаканится. Дальше окно целиком в распоряжении пользователя:
+    // переключение канала его больше не трогает.
+    for (const delay of [300, 700, 1200, 2000, 3500]) {
+      setTimeout(() => {
+        if (current?.child?.pid !== pid) return; // это уже другой запуск
+        try {
+          placer.place(placer.find(pid) || hwnd, bounds);
+        } catch { /* окно закрыли — переставлять нечего */ }
+      }, delay);
+    }
   }
 
   function stop() {
@@ -164,10 +228,4 @@ function createPlayer(deps = {}) {
   return { play, stop, isRunning: () => current !== null };
 }
 
-// Окно VLC намеренно НЕ позиционируется. В предыдущем проекте это стоило
-// нативной зависимости (koffi), сорока строк Win32, борьбы с состоянием
-// WS_MAXIMIZE и пяти переустановок позиции таймерами в первые 3.5 секунды —
-// всё ради того, чтобы окно не легло поверх нашего. Пользователь решает ту же
-// задачу, один раз перетащив окно: VLC сам запоминает своё положение между
-// запусками, как и любое отдельное приложение.
 module.exports = { createPlayer, findVlcPath, freePort, httpControl };

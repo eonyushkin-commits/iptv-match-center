@@ -87,6 +87,31 @@ app.on('window-all-closed', () => {
 });
 app.on('before-quit', () => vlc.stop());
 
+/**
+ * Место для окна VLC — вся полоса экрана справа от окна приложения, на том
+ * мониторе, где оно сейчас стоит. Считается заново на каждый `vlc:play`, а не
+ * отслеживается постоянно: окно ставится один раз при запуске VLC, дальше оно
+ * в полном распоряжении пользователя.
+ *
+ * `* scale` обязателен: Electron сообщает координаты в независимых от
+ * плотности пикселях, а SetWindowPos ждёт физические. На мониторе со
+ * стопроцентным масштабом разницы нет, и ошибку легко не заметить.
+ */
+function vlcTargetBounds() {
+  if (!win || win.isDestroyed()) return null;
+  const b = win.getBounds();
+  const display = screen.getDisplayMatching(b);
+  const scale = display.scaleFactor;
+  const wa = display.workArea;
+  const appRight = b.x + b.width;
+  return {
+    x: appRight * scale,
+    y: wa.y * scale,
+    width: Math.max(0, wa.x + wa.width - appRight) * scale,
+    height: wa.height * scale,
+  };
+}
+
 const cachedGuide = () => {
   const guide = store.readJson(path.join(store.root, 'guide.json'), null);
   return Array.isArray(guide?.events) ? guide : null;
@@ -130,7 +155,7 @@ ipcMain.handle('vlc:play', async (_e, { url }) => {
   const vlcPath = player.findVlcPath(config().vlcPath);
   if (!vlcPath) return { ok: false, error: 'VLC не найден. Установите VLC или задайте vlcPath в config.json' };
   try {
-    await vlc.play(vlcPath, url, config().streamUserAgent);
+    await vlc.play(vlcPath, url, { bounds: vlcTargetBounds(), userAgent: config().streamUserAgent });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
