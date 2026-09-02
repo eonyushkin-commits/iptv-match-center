@@ -120,6 +120,36 @@ function build(xmlSource, channelIds) {
 const key = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 16);
 const indexPath = (url) => path.join(store.root, `epg-index-${key(url)}.json`);
 
+/**
+ * Выбрасывает индексы, оставшиеся от чужих фидов.
+ *
+ * Индекс годен только вместе со своим фидом (см. get(): без свежего файла
+ * фида он не переиспользуется никогда), поэтому индекс, у которого фида уже
+ * нет, — это просто мусор. А мусор здесь дорогой: 30+ МБ на каждый когда-то
+ * использованный источник. Сам фид чистится в feed.js по TTL, но его прополка
+ * ловит только `epg-<hash>.xml.gz` и про индексы не знает — так они и
+ * копились бы вечно у всякого, кто хоть раз сменил провайдера. Ровно на этом
+ * в предыдущем проекте накопилось 170 МБ от четырёх источников.
+ */
+function pruneIndexes(keep) {
+  let names;
+  try {
+    names = fs.readdirSync(store.root);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const m = name.match(/^epg-index-([0-9a-f]+)\.json$/);
+    if (!m) continue;
+    const p = path.join(store.root, name);
+    if (p === keep) continue;
+    // Фид с тем же отпечатком ещё жив — значит источник просто не выбран
+    // сейчас, но к нему могут вернуться; индекс оставляем.
+    if (fs.existsSync(path.join(store.root, `epg-${m[1]}.xml.gz`))) continue;
+    try { fs.unlinkSync(p); } catch { /* исчез сам или занят — не наша забота */ }
+  }
+}
+
 /** Отпечаток набора каналов: сменился плейлист — индекс надо строить заново,
  * потому что отбор передач шёл именно по нему. */
 const channelsKey = (channelIds) => key([...channelIds].sort().join('\n'));
@@ -141,6 +171,10 @@ async function get(epgUrl, channels, onProgress = () => {}) {
   const ids = new Set(channels.map((c) => c.id).filter(Boolean));
   const chKey = channelsKey(ids);
   const file = indexPath(epgUrl);
+  // На каждом заходе, а не только после перестроения: пока текущий индекс
+  // свежий, сюда ниже мы и не дойдём, а чужие остатки лежали бы до
+  // ближайшего обновления фида.
+  pruneIndexes(file);
   const version = feed.cachedVersion(epgUrl);
 
   if (version) {
@@ -198,7 +232,11 @@ function mergeWindows(kickoffs, halfWidth) {
  * поиску, а не проход по всему массиву.
  */
 function window(rows, kickoffs, halfWidth) {
-  if (!kickoffs.length) return rows.map(inflate);
+  // Нет свистков — не «показать всё», а «смотреть не на что». Разница
+  // существенная: если FotMob целиком отвалится, список матчей окажется
+  // пустым, и трактовка «без фильтра» развернула бы в память весь фид
+  // (431 тысяча объектов) ради нуля матчей.
+  if (!kickoffs.length) return [];
   const out = [];
   for (const [lo, hi] of mergeWindows(kickoffs, halfWidth)) {
     let i = firstAtOrAfterRow(rows, lo);
@@ -233,4 +271,7 @@ function firstAtOrAfter(programmes, ms) {
   return lo;
 }
 
-module.exports = { build, get, window, mergeWindows, firstAtOrAfter, channelsKey, indexPath, parseTime, attr, tag };
+module.exports = {
+  build, get, window, mergeWindows, firstAtOrAfter, channelsKey,
+  indexPath, pruneIndexes, parseTime, attr, tag,
+};
