@@ -1,6 +1,52 @@
 'use strict';
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const { tokens, similarity } = require('./normalize');
 const { firstAtOrAfter } = require('./epg/index');
+
+/**
+ * Отпечаток самого сопоставления: исходники, которые решают, что с чем
+ * совпадает, плюс словарь имён.
+ *
+ * Кэш связей нельзя привязывать к одним лишь ДАННЫМ (фид, набор каналов):
+ * результат зависит ещё и от того, ЧЕМ он посчитан. Поймано дважды живьём.
+ *
+ * Раз: исправление нечёткого сравнения не убрало из ленты ложный канал Disney
+ * — кэш признал себя годным, ведь фид не менялся, — и правка вступила бы в
+ * силу лишь через шесть часов, при следующей перекачке.
+ *
+ * Два, и это хуже: правка `teams.json` не влияла ни на что по той же причине.
+ * То есть главная идея словаря — «имена команд это данные, добавил клуб и
+ * сразу работает, без выпуска новой версии» — молча работала вхолостую.
+ *
+ * Считается по СОДЕРЖИМОМУ файлов, а не номером версии, который надо помнить
+ * и поднимать руками: за один вечер я забыл это сделать дважды. Чтение своих
+ * же исходников работает и из app.asar; стоит один раз за запуск.
+ */
+let sourceHash = null;
+function matcherKey(aliases) {
+  if (sourceHash === null) {
+    const h = crypto.createHash('sha1');
+    // Оба файла целиком определяют исход: link.js — правила, normalize.js —
+    // канонизацию и транслитерацию, на которой эти правила стоят.
+    for (const f of [__filename, path.join(__dirname, 'normalize.js')]) {
+      try {
+        h.update(fs.readFileSync(f));
+      } catch {
+        // Прочитать себя не вышло — берём заведомо неповторимое значение,
+        // чтобы кэш считался негодным. Лишний пересчёт дешевле молчаливой
+        // ошибки: именно молчаливость и была тут главной бедой.
+        h.update(`нечитаемо-${Date.now()}-${Math.random()}`);
+      }
+    }
+    sourceHash = h.digest('hex').slice(0, 12);
+  }
+  // Словарь сериализуем по отсортированным ключам: порядок в объекте не
+  // должен менять отпечаток, иначе кэш будет сбрасываться на ровном месте.
+  const stable = JSON.stringify(Object.keys(aliases || {}).sort().map((k) => [k, aliases[k]]));
+  return crypto.createHash('sha1').update(sourceHash + stable).digest('hex').slice(0, 16);
+}
 
 const WINDOW_MS = 90 * 60 * 1000;
 const TEAM_THRESHOLD = 78;
@@ -221,6 +267,7 @@ module.exports = {
   meaningfulTeamTokens,
   teamInTitle,
   levenshtein,
+  matcherKey,
   WINDOW_MS,
   GENERIC_TEAM_TOKENS,
 };

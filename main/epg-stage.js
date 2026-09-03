@@ -28,10 +28,12 @@ const broadcasters = require('./broadcasters');
  * Бонусом память: 213-мегабайтный буфер фида живёт и умирает внутри потока.
  *
  * @param input.cachedLinks сохранённое из links.json целиком —
- *        { feedVersion, channelsKey, byFixture } либо null. Именно целиком, а
- *        не одни лишь связи: годность проверяется ЗДЕСЬ, потому что только
- *        здесь известна версия фида после возможной перекачки.
- * @returns { links, extraBroadcasts, stats }
+ *        `{ feedVersion, channelsKey, matcherKey, byFixture }` либо null.
+ *        Именно целиком, а не одни лишь связи: годность проверяется ЗДЕСЬ,
+ *        потому что только здесь известна и версия фида после возможной
+ *        перекачки, и отпечаток самого сопоставления.
+ * @returns { links, feedVersion, channelsKey, matcherKey, extraBroadcasts,
+ *          candidates, stats }
  */
 async function run(input, onProgress = () => {}) {
   const { epgUrl, cacheRoot, channels, fixtures, cachedLinks, stationsByCountry, aliases } = input;
@@ -67,10 +69,19 @@ async function run(input, onProgress = () => {}) {
   // трансляции в ленте стали «только FotMob», потому что переиспользовался
   // мусор. Внешне это выглядело как «EPG перестал работать», хотя
   // сопоставление было исправно и с нуля находило 51 связь против 2 в кэше.
-  const sameFeed = cachedLinks
+  //
+  // Третий ключ — отпечаток самого сопоставления (исходники правил плюс
+  // словарь имён). Без него кэш переживал правку алгоритма: исправление
+  // нечёткого сравнения не убрало ложный канал Disney из ленты, потому что
+  // фид не менялся. И он же чинит вещь потише: правка teams.json не влияла ни
+  // на что до смены фида, то есть главная идея словаря — «имена как данные,
+  // без выпуска новой версии» — работала вхолостую.
+  const matcherKey = link.matcherKey(aliases);
+  const reusable = cachedLinks
     && cachedLinks.feedVersion === feedVersion
-    && cachedLinks.channelsKey === channelsKey;
-  const previous = sameFeed ? (cachedLinks.byFixture || {}) : {};
+    && cachedLinks.channelsKey === channelsKey
+    && cachedLinks.matcherKey === matcherKey;
+  const previous = reusable ? (cachedLinks.byFixture || {}) : {};
 
   for (const f of fixtures) {
     const prev = previous[String(f.id)];
@@ -135,8 +146,11 @@ async function run(input, onProgress = () => {}) {
 
   return {
     links,
+    // Все три ключа, под которыми эти связи посчитаны, — sync.js кладёт их
+    // рядом со связями, иначе в следующий раз сверять будет не с чем.
     feedVersion,
     channelsKey,
+    matcherKey,
     // Map переносится структурным клонированием как есть, с ключами любого
     // типа; обычный объект привёл бы их к строкам. Сегодня id матчей у FotMob
     // строковые (проверено у источника), так что объект сработал бы тоже, —

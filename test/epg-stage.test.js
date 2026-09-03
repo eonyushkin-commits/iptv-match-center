@@ -90,9 +90,15 @@ describe('этап целиком', () => {
     assert.strictEqual(e.stop, KICKOFF + 110 * 60000);
   });
 
-  /** Сохранённое так, как его отдаёт sync.js: связи вместе с версиями. */
-  const saved = (r, over = {}) =>
-    ({ v: 1, feedVersion: r.feedVersion, channelsKey: r.channelsKey, byFixture: r.links, ...over });
+  /** Сохранённое так, как его отдаёт sync.js: связи вместе со всеми ключами. */
+  const saved = (r, over = {}) => ({
+    v: 1,
+    feedVersion: r.feedVersion,
+    channelsKey: r.channelsKey,
+    matcherKey: r.matcherKey,
+    byFixture: r.links,
+    ...over,
+  });
 
   // Ровно то, ради чего затевалась вся инкрементальность.
   test('повторный прогон: ни разбора, ни сопоставления', async () => {
@@ -147,6 +153,47 @@ describe('этап целиком', () => {
       const r = await stage.run(input({ cachedLinks: null }));
       assert.strictEqual(r.stats.reusedLinks, 0);
       assert.strictEqual(r.stats.matched, 2);
+    });
+  });
+
+  // Кэш зависит не только от ДАННЫХ (фид, каналы), но и от того, ЧЕМ он
+  // посчитан. Без этого правка алгоритма не вступала в силу до смены фида —
+  // так ложный канал Disney пережил собственное исправление, — а правка
+  // teams.json не влияла ни на что вообще, обнуляя главную идею словаря.
+  describe('кэш зависит от самого сопоставления', () => {
+    test('этап возвращает отпечаток, чтобы его было где сохранить', async () => {
+      const r = await stage.run(input());
+      assert.ok(r.matcherKey, 'без него sync.js нечего класть рядом со связями');
+    });
+
+    test('правка словаря имён сбрасывает кэш — иначе она ни на что не влияет', async () => {
+      const first = await stage.run(input());
+      const withNewAlias = { ...teams.SEED, 'Athletic Club': ['Атлетик Бильбао'] };
+      const second = await stage.run(input({ cachedLinks: saved(first), aliases: withNewAlias }));
+      assert.strictEqual(second.stats.reusedLinks, 0, 'словарь другой — связи надо считать заново');
+      assert.strictEqual(second.stats.matched, 2);
+    });
+
+    test('тот же словарь — кэш остаётся годным', async () => {
+      const first = await stage.run(input());
+      const second = await stage.run(input({ cachedLinks: saved(first), aliases: { ...teams.SEED } }));
+      assert.strictEqual(second.stats.reusedLinks, 2, 'копия того же словаря не повод пересчитывать');
+    });
+
+    test('чужой отпечаток сопоставления — считаем заново', async () => {
+      const first = await stage.run(input());
+      const stale = saved(first, { matcherKey: 'алгоритм-был-другой' });
+      const second = await stage.run(input({ cachedLinks: stale }));
+      assert.strictEqual(second.stats.reusedLinks, 0);
+      assert.strictEqual(second.stats.matched, 2);
+    });
+
+    test('кэш без отпечатка вовсе (записан прежней версией) — считаем заново', async () => {
+      const first = await stage.run(input());
+      const old = saved(first);
+      delete old.matcherKey;
+      const second = await stage.run(input({ cachedLinks: old }));
+      assert.strictEqual(second.stats.reusedLinks, 0);
     });
   });
 

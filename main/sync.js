@@ -128,7 +128,7 @@ async function run(config, onProgress = () => {}) {
   // возможной перекачки. Отдать одни лишь связи, без версий, значит отдать их
   // без срока годности — на этом уже обожглись.
   const savedLinks = store.readJson(linksPath(), null);
-  const { links, feedVersion, channelsKey, extraBroadcasts, candidates, stats: stageStats } =
+  const { links, feedVersion, channelsKey, matcherKey, extraBroadcasts, candidates, stats: stageStats } =
     await runStageInWorker({
       epgUrl,
       cacheRoot: store.root,
@@ -140,7 +140,7 @@ async function run(config, onProgress = () => {}) {
     }, onProgress);
 
   store.writeJson(linksPath(), {
-    v: LINKS_FORMAT, feedVersion, channelsKey, savedAt: Date.now(), byFixture: links,
+    v: LINKS_FORMAT, feedVersion, channelsKey, matcherKey, savedAt: Date.now(), byFixture: links,
   });
   teams.recordCandidates(candidates);
 
