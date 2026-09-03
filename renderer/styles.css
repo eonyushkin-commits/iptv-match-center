@@ -241,6 +241,31 @@ html, body {
   background: rgba(163, 113, 247, 0.08);
 }
 
+/* Подсветка под курсором усиливает СВОЙ цвет, а не подменяет его общим: цвет
+   здесь несёт смысл, и терять его при наведении нельзя. `:focus-visible`
+   рядом — чипы это кнопки, и с клавиатуры по ним тоже ходят. */
+.chip {
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+.chip.is-confirmed:hover,
+.chip.is-confirmed:focus-visible {
+  border-color: var(--ok);
+  background: rgba(78, 201, 127, 0.24);
+}
+.chip.is-epg:hover,
+.chip.is-epg:focus-visible {
+  border-color: var(--epg);
+  background: rgba(88, 166, 255, 0.22);
+}
+.chip.is-fotmob:hover,
+.chip.is-fotmob:focus-visible {
+  border-color: var(--fotmob);
+  background: rgba(163, 113, 247, 0.2);
+}
+.chip:focus-visible { outline: none; }
+/* Нажатие видно сразу, не дожидаясь запуска VLC: он поднимается секунды. */
+.chip:active { transform: translateY(1px); }
+
 /* Пояснение к цветам — иначе их приходится держать в голове. Мелко и тускло:
    строка нужна раз, а место в узком окне занимает всегда. */
 .legend {
