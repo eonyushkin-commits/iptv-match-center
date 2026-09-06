@@ -40,6 +40,15 @@ async function run(input, onProgress = () => {}) {
   store.setRoot(cacheRoot);
 
   const { rows, stats: epgStats } = await epgIndex.get(epgUrl, channels, onProgress);
+
+  // Разобранный фид, в котором нет НИ ОДНОЙ передачи на каналах плейлиста, —
+  // это почти наверняка чужой EPG: у него другая схема `tvg-id`. Молчать об
+  // этом нельзя. Уже проходили: попался источник, покрывавший 24 канала из
+  // четырёх тысяч, ни одна связь не нашлась, и снаружи это выглядело как
+  // «EPG перестал работать», хотя сопоставление было исправно.
+  if (!epgStats.total) {
+    onProgress('EPG разобран, но ни один канал плейлиста в нём не найден — похоже, фид не от этого плейлиста');
+  }
   const feedVersion = feed.cachedVersion(epgUrl) ?? 'unknown';
   const channelsKey = epgIndex.channelsKey(new Set(channels.map((c) => c.id).filter(Boolean)));
 
