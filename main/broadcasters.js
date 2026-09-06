@@ -55,11 +55,18 @@ function matchingIds(stationTokens, prepared) {
  * СЕТЕВАЯ половина. Возвращает только имена станций, а не сырой ответ: сырьё
  * это ~40 стран по 300 КБ, тащить его дальше незачем.
  *
- * @returns Map<countryCode, Map<fixtureId, string[]>>
+ * Возвращает ещё и счётчик ответивших стран, и это не статистика ради
+ * статистики. Пустой результат сам по себе двусмыслен: то ли ни одна страна
+ * не показывает наши матчи (практически невероятно на четырёх десятках
+ * стран), то ли сеть легла целиком. Различить их можно только так — и это
+ * различие важно, потому что кэшировать провал нельзя.
+ *
+ * @returns { byCountry: Map<countryCode, Map<fixtureId, string[]>>, asked, answered }
  */
 async function collectStations(fixtureIds, countries, onProgress = () => {}) {
   const wanted = new Set(fixtureIds.map(String));
   const byCountry = new Map();
+  let answered = 0;
 
   for (let i = 0; i < countries.length; i += BATCH_SIZE) {
     const batch = countries.slice(i, i + BATCH_SIZE);
@@ -75,6 +82,7 @@ async function collectStations(fixtureIds, countries, onProgress = () => {}) {
     for (let bi = 0; bi < batch.length; bi++) {
       const listings = listingsBatch[bi];
       if (!listings) continue;
+      answered++;
       const perFixture = new Map();
       for (const [fid, entries] of Object.entries(listings)) {
         if (!wanted.has(fid)) continue;
@@ -88,7 +96,7 @@ async function collectStations(fixtureIds, countries, onProgress = () => {}) {
       if (perFixture.size) byCountry.set(batch[bi], perFixture);
     }
   }
-  return byCountry;
+  return { byCountry, asked: countries.length, answered };
 }
 
 /**

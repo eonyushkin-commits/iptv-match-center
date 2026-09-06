@@ -84,9 +84,24 @@ async function stations(fixtureIds, countries, onProgress) {
     return new Map(saved.byCountry.map(([c, per]) => [c, new Map(per)]));
   }
   onProgress('Спрашиваю вещателей…');
-  const byCountry = await broadcasters.collectStations(fixtureIds, countries, onProgress);
+  const { byCountry, asked, answered } = await broadcasters.collectStations(fixtureIds, countries, onProgress);
+
+  // Провал НЕ кэшируем. Ошибки по странам глушатся поодиночке, чтобы одна
+  // отвалившаяся не топила остальные, — и из-за этого полный обрыв сети
+  // выглядел точно как честный ответ «никто ничего не показывает». Такой
+  // пустой ответ ложился в кэш на три часа, и всё это время источник даже не
+  // спрашивали. Поймано живьём: сеть моргнула в 10:04, и до 13:04 в ленте не
+  // было ни одной заявки вещателей — 273 трансляции только из EPG, ноль
+  // подтверждённых обоими источниками, и ни слова о том, что случилось.
+  if (!answered) {
+    onProgress(`Вещатели не ответили (${asked} стран) — попробую в следующий раз`);
+    return byCountry;
+  }
+
   store.writeJson(stationsPath(), {
     at: Date.now(),
+    asked,
+    answered, // для диагностики: сколько стран реально ответило
     byCountry: [...byCountry].map(([c, per]) => [c, [...per]]),
   });
   return byCountry;
